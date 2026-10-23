@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mes tickets Lidl</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+  :root {
+    --bg: #f4f6f9; --card: #fff; --ink: #1c2430; --muted: #6b7686; --line: #e3e7ee;
+    --brand: #0050aa; --accent: #ffd500; --up: #c62828; --down: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--ink); }
+  header { background: var(--brand); color: #fff; padding: 14px 24px;
+           display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  header h1 span { background: var(--accent); color: var(--brand); padding: 1px 6px;
+                   border-radius: 4px; margin-right: 6px; }
+  button { font: inherit; border: 0; border-radius: 6px; padding: 8px 14px; cursor: pointer;
+           background: var(--accent); color: #1c2430; font-weight: 600; }
+  button.ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.5); }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 13px; opacity: .9; }
+  main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .kpi b { display: block; font-size: 22px; }
+  .kpi small { color: var(--muted); }
+  .tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+  .tabs button { background: transparent; color: var(--muted); }
+  .tabs button.on { background: var(--card); color: var(--brand); border: 1px solid var(--line); }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 16px; }
+  @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+  input, select { font: inherit; padding: 8px 10px; border: 1px solid var(--line);
+                  border-radius: 6px; background: #fff; }
+  .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .toolbar input { flex: 1; }
+  .scroll { max-height: 560px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { position: sticky; top: 0; background: var(--card); color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover, tbody tr.sel { background: #eef4fc; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .muted { color: var(--muted); }
+  .progress { height: 4px; background: rgba(255,255,255,.3); border-radius: 2px; width: 160px; }
+  .progress i { display: block; height: 100%; background: var(--accent); border-radius: 2px; width: 0; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1><span>Lidl</span>Suivi de mes tickets</h1>
+  <div id="status">…</div>
+  <div class="progress hidden" id="prog"><i></i></div>
+  <button id="btnLogin">Se connecter à Lidl Plus</button>
+  <button id="btnSync" disabled>Synchroniser</button>
+  <button id="btnLogout" class="ghost hidden">Déconnexion</button>
+</header>
+
+<main>
+  <section class="kpis">
+    <div class="card kpi"><small>Tickets</small><b id="kTickets">–</b></div>
+    <div class="card kpi"><small>Période</small><b id="kPeriod">–</b></div>
+    <div class="card kpi"><small>Total dépensé</small><b id="kTotal">–</b></div>
+    <div class="card kpi"><small>Lignes produit</small><b id="kItems">–</b></div>
+  </section>
+
+  <nav class="tabs">
+    <button data-tab="products" class="on">Produits & prix</button>
+    <button data-tab="tickets">Tickets</button>
+    <button data-tab="spending">Dépenses mensuelles</button>
+  </nav>
+
+  <section id="tab-products" class="split">
+    <div class="card">
+      <div class="toolbar">
+        <input id="q" placeholder="Rechercher un produit ou une référence…">
+        <select id="group" title="Regrouper par">
+          <option value="code">par référence</option>
+          <option value="name">par libellé</option>
+        </select>
+        <select id="sort" title="Trier par">
+          <option value="purchases">+ achetés</option>
+          <option value="price">+ chers</option>
+          <option value="increase">+ forte hausse</option>
+        </select>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Produit</th><th class="num">Achats</th><th class="num">1er prix</th>
+            <th class="num">Dernier</th><th class="num">Évol.</th></tr></thead>
+          <tbody id="productRows"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <h2 id="pTitle">Sélectionnez un produit</h2>
+      <div class="muted" id="pSub">L'évolution de son prix unitaire s'affichera ici.</div>
+      <canvas id="priceChart" height="220"></canvas>
+      <div class="scroll" style="max-height:260px;margin-top:12px">
+        <table><thead><tr><th>Date</th><th>Magasin</th><th class="num">Prix unit.</th>
+          <th class="num">Qté</th><th class="num">Remise</th></tr></thead>
+          <tbody id="historyRows"></tbody></table>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-tickets" class="split hidden">
+    <div class="card scroll">
+      <table><thead><tr><th>Date</th><th>Magasin</th><th class="num">Articles</th>
+        <th class="num">Total</th></tr></thead><tbody id="ticketRows"></tbody></table>
+    </div>
+    <div class="card">
+      <h2 id="tTitle">Sélectionnez un ticket</h2>
+      <div class="scroll"><table><thead><tr><th>Réf.</th><th>Produit</th>
+        <th class="num">Prix unit.</th><th class="num">Qté</th><th class="num">Montant</th>
+        <th class="num">1er prix connu</th><th class="num">Évol.</th></tr></thead>
+        <tbody id="ticketItems"></tbody>
+        <tfoot id="ticketFoot"></tfoot></table></div>
+    </div>
+  </section>
+
+  <section id="tab-spending" class="card hidden">
+    <canvas id="spendChart" height="110"></canvas>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const eur = v => v == null ? "–" : v.toLocaleString("fr-FR", {style: "currency", currency: "EUR"});
+const fdate = d => d ? new Date(d).toLocaleDateString("fr-FR") : "–";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const api = async (url, opts) => {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+};
+
+let priceChart, spendChart, polling = null, lastSyncRunning = false;
+
+// ------------------------------------------------------------------ statut
+async function refreshStatus() {
+  const s = await api("/api/status");
+  const st = s.stats;
+  $("#kTickets").textContent = st.tickets;
+  $("#kPeriod").textContent = st.first_date ? `${fdate(st.first_date)} → ${fdate(st.last_date)}` : "–";
+  $("#kPeriod").style.fontSize = "15px";
+  $("#kTotal").textContent = eur(st.total_spent);
+  $("#kItems").textContent = st.items;
+
+  $("#btnLogin").classList.toggle("hidden", s.logged_in);
+  $("#btnLogout").classList.toggle("hidden", !s.logged_in);
+  $("#btnSync").disabled = !s.logged_in || s.sync.running;
+  $("#btnLogin").disabled = s.login.status === "running";
+
+  let msg = s.logged_in ? `Connecté (${s.country})` : "Non connecté";
+  if (s.login.status === "running" || s.login.status === "error") msg = s.login.message;
+  if (s.sync.running) msg = `${s.sync.message} ${s.sync.done}/${s.sync.total}`;
+  else if (s.sync.error) msg = "⚠ " + s.sync.error;
+  else if (s.sync.message) msg += " · " + s.sync.message;
+  $("#status").textContent = msg;
+
+  $("#prog").classList.toggle("hidden", !s.sync.running);
+  $("#prog i").style.width = s.sync.total ? (100 * s.sync.done / s.sync.total) + "%" : "0";
+
+  if (lastSyncRunning && !s.sync.running) loadAll();
+  lastSyncRunning = s.sync.running;
+  const busy = s.sync.running || s.login.status === "running";
+  if (busy && !polling) polling = setInterval(refreshStatus, 1500);
+  if (!busy && polling) { clearInterval(polling); polling = null; }
+}
+
+$("#btnLogin").onclick = async () => { await api("/api/login", {method: "POST"}); refreshStatus(); };
+$("#btnSync").onclick = async () => { await api("/api/sync", {method: "POST"}); refreshStatus(); };
+$("#btnLogout").onclick = async () => { await api("/api/logout", {method: "POST"}); refreshStatus(); };
+
+// ------------------------------------------------------------------ onglets
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  ["products", "tickets", "spending"].forEach(t =>
+    $("#tab-" + t).classList.toggle("hidden", t !== b.dataset.tab));
+  if (b.dataset.tab === "spending") loadSpending();
+});
+
+// ------------------------------------------------------------------ produits
+async function loadProducts() {
+  const rows = await api(`/api/products?q=${encodeURIComponent($("#q").value)}&group=${$("#group").value}&sort=${$("#sort").value}`);
+  $("#productRows").innerHTML = rows.map(p => {
+    const c = p.change_pct, cls = c > 0 ? "up" : c < 0 ? "down" : "";
+    return `<tr data-key="${esc(p.key)}" data-name="${esc(p.name)}">
+      <td>${esc(p.name)}<br><small class="muted">${esc(p.key !== p.name ? p.key : "")}${p.is_weight ? " · au kg" : ""}</small></td>
+      <td class="num">${p.purchases}</td>
+      <td class="num">${eur(p.first_price)}<br><small class="muted">${fdate(p.first_date)}</small></td>
+      <td class="num">${eur(p.last_price)}<br><small class="muted">${fdate(p.last_date)}</small></td>
+      <td class="num ${cls}">${c == null ? "–" : (c > 0 ? "+" : "") + c + " %"}</td></tr>`;
+  }).join("") || `<tr><td colspan="5" class="muted">Aucune donnée. Connectez-vous puis synchronisez.</td></tr>`;
+  $("#productRows").querySelectorAll("tr[data-key]").forEach(tr => tr.onclick = () => {
+    $("#productRows").querySelectorAll("tr").forEach(x => x.classList.remove("sel"));
+    tr.classList.add("sel");
+    showProduct(tr.dataset.key, tr.dataset.name);
+  });
+}
+
+async function showProduct(key, name) {
+  const h = await api(`/api/history?key=${encodeURIComponent(key)}&group=${$("#group").value}`);
+  const names = [...new Set(h.map(x => x.name))];
+  $("#pTitle").textContent = name;
+  $("#pSub").textContent = `${h.length} achats` + (names.length > 1 ? ` · libellés : ${names.join(", ")}` : "");
+  const pts = h.map(x => ({x: x.date, y: x.unit_price}));
+  const paid = h.filter(x => x.discount > 0).map(x => ({x: x.date, y: (x.amount - x.discount) / x.quantity}));
+  priceChart?.destroy();
+  priceChart = new Chart($("#priceChart"), {
+    type: "line",
+    data: { datasets: [
+      { label: "Prix unitaire", data: pts, borderColor: "#0050aa", backgroundColor: "#0050aa",
+        tension: .15, pointRadius: 3, stepped: false },
+      ...(paid.length ? [{ label: "Prix payé après remise", data: paid, showLine: false,
+        borderColor: "#e0a800", backgroundColor: "#ffd500", pointRadius: 4 }] : []) ] },
+    options: { parsing: true, interaction: {mode: "nearest", intersect: false},
+      scales: { x: { type: "time", time: { unit: "month", tooltipFormat: "dd/MM/yyyy", displayFormats: { month: "MM/yyyy" } } },
+                y: { ticks: { callback: v => eur(v) } } },
+      plugins: { tooltip: { callbacks: { label: c => `${c.dataset.label} : ${eur(c.parsed.y)}` } } } }
+  });
+  $("#historyRows").innerHTML = h.slice().reverse().map(x => `<tr>
+    <td>${fdate(x.date)}</td><td>${esc(x.store)}</td><td class="num">${eur(x.unit_price)}</td>
+    <td class="num">${x.is_weight ? x.quantity + " kg" : x.quantity}</td>
+    <td class="num">${x.discount ? eur(x.discount) : ""}</td></tr>`).join("");
+}
+
+let t; $("#q").oninput = () => { clearTimeout(t); t = setTimeout(loadProducts, 250); };
+$("#group").onchange = loadProducts;
+$("#sort").onchange = loadProducts;
+
+// ------------------------------------------------------------------ tickets
+async function loadTickets() {
+  const rows = await api("/api/tickets");
+  $("#ticketRows").innerHTML = rows.map(r => `<tr data-id="${esc(r.id)}" data-label="${fdate(r.date)} · ${esc(r.store)}">
+    <td>${fdate(r.date)}</td><td>${esc(r.store)}</td><td class="num">${r.n_items}</td>
+    <td class="num">${eur(r.total)}</td></tr>`).join("");
+  $("#ticketRows").querySelectorAll("tr").forEach(tr => tr.onclick = async () => {
+    $("#ticketRows").querySelectorAll("tr").forEach(x => x.classList.remove("sel"));
+    tr.classList.add("sel");
+    $("#tTitle").textContent = tr.dataset.label;
+    const t = await api("/api/tickets/" + encodeURIComponent(tr.dataset.id));
+    $("#ticketItems").innerHTML = t.items.map(i => {
+      const pct = (i.first_price && !i.first_is_now)
+        ? Math.round((i.unit_price - i.first_price) / i.first_price * 1000) / 10 : null;
+      const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
+      return `<tr><td class="muted">${esc(i.code)}</td>
+        <td>${esc(i.name)}</td><td class="num">${eur(i.unit_price)}</td>
+        <td class="num">${i.is_weight ? i.quantity + " kg" : i.quantity}</td>
+        <td class="num">${eur(i.amount)}${i.discount ? `<br><small class="down">−${eur(i.discount)}</small>` : ""}</td>
+        <td class="num">${i.first_is_now ? "–" : eur(i.first_price)}${i.first_date && !i.first_is_now ? `<br><small class="muted">${fdate(i.first_date)}</small>` : ""}</td>
+        <td class="num ${cls}">${pct == null ? "–" : (pct > 0 ? "+" : "") + pct + " %"}</td></tr>`;
+    }).join("") || `<tr><td colspan="7" class="muted">Aucune ligne produit.</td></tr>`;
+
+    const delta = t.delta_vs_first_price, dcls = delta > 0 ? "up" : delta < 0 ? "down" : "";
+    $("#ticketFoot").innerHTML = `
+      <tr><td colspan="4"><b>Total du ticket</b></td><td class="num"><b>${eur(t.total)}</b></td>
+        <td colspan="2"></td></tr>
+      <tr><td colspan="4" class="muted">Même panier, aux prix les plus anciens connus</td>
+        <td class="num">${eur(t.total_at_first_price)}</td>
+        <td colspan="2" class="num ${dcls}">${delta > 0 ? "+" : ""}${eur(delta)}</td></tr>`;
+  });
+}
+
+// ------------------------------------------------------------------ dépenses
+async function loadSpending() {
+  const rows = await api("/api/spending");
+  spendChart?.destroy();
+  spendChart = new Chart($("#spendChart"), {
+    type: "bar",
+    data: { labels: rows.map(r => r.month),
+            datasets: [{ label: "Dépenses", data: rows.map(r => r.total), backgroundColor: "#0050aa" }] },
+    options: { scales: { y: { ticks: { callback: v => eur(v) } } },
+      plugins: { legend: {display: false},
+        tooltip: { callbacks: { label: c => `${eur(c.parsed.y)} · ${rows[c.dataIndex].tickets} tickets` } } } }
+  });
+}
+
+function loadAll() { loadProducts(); loadTickets(); refreshStatus(); }
+loadAll();
+</script>
+</body>
+</html>
