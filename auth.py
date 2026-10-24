@@ -4,7 +4,7 @@ Principe : on ouvre une vraie fenêtre Chromium sur la page de connexion Lidl.
 C'est VOUS qui saisissez identifiant, mot de passe et code de vérification
 (SMS/e-mail, captcha éventuel). L'outil ne voit jamais votre mot de passe :
 il intercepte seulement la redirection finale contenant le code d'autorisation,
-puis l'échange contre un jeton (refresh token) stocké localement dans data/token.json.
+puis l'échange contre un jeton (refresh token), stocké chiffré en base pour l'utilisateur.
 """
 from __future__ import annotations
 
@@ -16,8 +16,11 @@ import time
 from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
+from cryptography.fernet import InvalidToken
 
+import accounts
 import config
+import db
 
 ACCOUNTS_URL = "https://accounts.lidl.com"
 CLIENT_ID = "LidlPlusNativeClient"
@@ -45,13 +48,16 @@ def _basic_auth_header() -> dict:
 
 # --------------------------------------------------------------------------- stockage
 class TokenStore:
-    def __init__(self, path=config.TOKEN_PATH):
-        self.path = path
+    """Jeton Lidl d'un utilisateur du portail, chiffré en base (Fernet)."""
+
+    def __init__(self, user_id: int):
+        self.user_id = user_id
         self.data: dict = {}
-        if self.path.exists():
+        payload = db.load_lidl_token(user_id)
+        if payload:
             try:
-                self.data = json.loads(self.path.read_text())
-            except json.JSONDecodeError:
+                self.data = json.loads(accounts.decrypt(payload))
+            except (InvalidToken, json.JSONDecodeError):
                 self.data = {}
 
     @property
@@ -64,16 +70,11 @@ class TokenStore:
             "refresh_token": token_response.get("refresh_token", self.data.get("refresh_token")),
             "expires_at": time.time() + int(token_response.get("expires_in", 3600)) - 60,
         }
-        self.path.write_text(json.dumps(self.data, indent=2))
-        try:
-            self.path.chmod(0o600)
-        except OSError:
-            pass
+        db.save_lidl_token(self.user_id, accounts.encrypt(json.dumps(self.data)))
 
     def clear(self) -> None:
         self.data = {}
-        if self.path.exists():
-            self.path.unlink()
+        db.delete_lidl_token(self.user_id)
 
     def access_token(self, force_refresh: bool = False) -> str:
         if not self.logged_in:

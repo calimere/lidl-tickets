@@ -10,17 +10,36 @@ import config
 from parser import parse_items, ticket_meta
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+    token_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    expires_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS lidl_tokens (
+    user_id    INTEGER PRIMARY KEY,
+    payload    TEXT NOT NULL,          -- JSON chiffré (Fernet)
+    updated_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tickets (
-    id          TEXT PRIMARY KEY,
+    user_id     INTEGER NOT NULL,
+    id          TEXT NOT NULL,
     date        TEXT NOT NULL,
     store       TEXT,
     total       REAL,
     raw_summary TEXT,
-    raw_detail  TEXT
+    raw_detail  TEXT,
+    PRIMARY KEY (user_id, id)
 );
 CREATE TABLE IF NOT EXISTS items (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_id   TEXT NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    user_id     INTEGER NOT NULL,
+    ticket_id   TEXT NOT NULL,
     date        TEXT NOT NULL,
     code        TEXT,
     name        TEXT NOT NULL,
@@ -28,11 +47,13 @@ CREATE TABLE IF NOT EXISTS items (
     quantity    REAL,
     is_weight   INTEGER,
     amount      REAL,
-    discount    REAL
+    discount    REAL,
+    FOREIGN KEY (user_id, ticket_id) REFERENCES tickets(user_id, id) ON DELETE CASCADE
 );
-CREATE INDEX IF NOT EXISTS idx_items_code ON items(code);
-CREATE INDEX IF NOT EXISTS idx_items_name ON items(name);
-CREATE INDEX IF NOT EXISTS idx_items_date ON items(date);
+CREATE INDEX IF NOT EXISTS idx_items_user_code ON items(user_id, code);
+CREATE INDEX IF NOT EXISTS idx_items_user_name ON items(user_id, name);
+CREATE INDEX IF NOT EXISTS idx_items_user_date ON items(user_id, date);
+-- Tables partagées entre utilisateurs : elles ne dépendent que de la référence produit
 CREATE TABLE IF NOT EXISTS name_fixes (
     code       TEXT PRIMARY KEY,
     fixed_name TEXT NOT NULL,
@@ -50,6 +71,8 @@ CREATE TABLE IF NOT EXISTS product_labels (
 );
 """
 
+LEGACY_USER_ID = 0   # tickets importés avant l'arrivée des comptes (voir adopt_legacy)
+
 
 @contextmanager
 def connect():
@@ -63,14 +86,139 @@ def connect():
         con.close()
 
 
+def _migrate_single_user(con) -> None:
+    """Ancienne base mono-utilisateur (sans colonne user_id) : on reconstruit
+    tickets/items en rattachant les lignes existantes à LEGACY_USER_ID."""
+    cols = [r["name"] for r in con.execute("PRAGMA table_info(tickets)")]
+    if not cols or "user_id" in cols:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    con.execute("ALTER TABLE tickets RENAME TO tickets_old")
+    con.execute("ALTER TABLE items RENAME TO items_old")
+    con.execute("DROP INDEX IF EXISTS idx_items_code")
+    con.execute("DROP INDEX IF EXISTS idx_items_name")
+    con.execute("DROP INDEX IF EXISTS idx_items_date")
+    con.executescript(SCHEMA)
+    con.execute(
+        """INSERT INTO tickets (user_id, id, date, store, total, raw_summary, raw_detail)
+           SELECT ?, id, date, store, total, raw_summary, raw_detail FROM tickets_old""",
+        (LEGACY_USER_ID,))
+    con.execute(
+        """INSERT INTO items (user_id, ticket_id, date, code, name, unit_price, quantity,
+                              is_weight, amount, discount)
+           SELECT ?, ticket_id, date, code, name, unit_price, quantity,
+                  is_weight, amount, discount FROM items_old""", (LEGACY_USER_ID,))
+    con.execute("DROP TABLE items_old")
+    con.execute("DROP TABLE tickets_old")
+    con.execute("PRAGMA foreign_keys = ON")
+
+
 def init() -> None:
     with connect() as con:
+        _migrate_single_user(con)
         con.executescript(SCHEMA)
 
 
-def known_ticket_ids() -> set[str]:
+# --------------------------------------------------------------------------- comptes
+def create_user(email: str, password_hash: str) -> int:
+    """Lève sqlite3.IntegrityError si l'e-mail existe déjà."""
     with connect() as con:
-        return {r[0] for r in con.execute("SELECT id FROM tickets")}
+        cur = con.execute(
+            "INSERT INTO users (email, password_hash, created_at) VALUES (?,?, datetime('now'))",
+            (email, password_hash))
+        return cur.lastrowid
+
+
+def user_by_email(email: str) -> dict | None:
+    with connect() as con:
+        r = con.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        return dict(r) if r else None
+
+
+def user_by_id(user_id: int) -> dict | None:
+    with connect() as con:
+        r = con.execute("SELECT id, email, created_at FROM users WHERE id = ?",
+                        (user_id,)).fetchone()
+        return dict(r) if r else None
+
+
+def set_password_hash(user_id: int, password_hash: str) -> None:
+    with connect() as con:
+        con.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user_id))
+
+
+def save_session(token_hash: str, user_id: int, expires_at: float) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM sessions WHERE expires_at < CAST(strftime('%s','now') AS INTEGER)")
+        con.execute("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?,?,?)",
+                    (token_hash, user_id, expires_at))
+
+
+def user_for_session(token_hash: str, now: float) -> dict | None:
+    with connect() as con:
+        r = con.execute(
+            """SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id
+               WHERE s.token_hash = ? AND s.expires_at > ?""", (token_hash, now)).fetchone()
+        return dict(r) if r else None
+
+
+def delete_session(token_hash: str) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+
+
+def delete_user(user_id: int) -> None:
+    """Supprime le compte et TOUTES ses données (tickets bruts compris)."""
+    with connect() as con:
+        con.execute("DELETE FROM items WHERE user_id = ?", (user_id,))
+        con.execute("DELETE FROM tickets WHERE user_id = ?", (user_id,))
+        con.execute("DELETE FROM lidl_tokens WHERE user_id = ?", (user_id,))
+        con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        con.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+
+def load_lidl_token(user_id: int) -> str | None:
+    with connect() as con:
+        r = con.execute("SELECT payload FROM lidl_tokens WHERE user_id = ?", (user_id,)).fetchone()
+        return r[0] if r else None
+
+
+def save_lidl_token(user_id: int, payload: str) -> None:
+    with connect() as con:
+        con.execute(
+            """INSERT INTO lidl_tokens (user_id, payload, updated_at) VALUES (?,?, datetime('now'))
+               ON CONFLICT(user_id) DO UPDATE SET
+                 payload=excluded.payload, updated_at=excluded.updated_at""",
+            (user_id, payload))
+
+
+def delete_lidl_token(user_id: int) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM lidl_tokens WHERE user_id = ?", (user_id,))
+
+
+def adopt_legacy(user_id: int) -> tuple[int, int]:
+    """Rattache à ce compte les tickets importés avant l'arrivée des comptes."""
+    # Connexion à part : la clé parente (user_id, id) change en même temps que celle
+    # des lignes, ce qui exige de suspendre les clés étrangères le temps de la mise à jour.
+    con = sqlite3.connect(config.DB_PATH)
+    try:
+        con.execute("PRAGMA foreign_keys = OFF")
+        t = con.execute("UPDATE tickets SET user_id = ? WHERE user_id = ?",
+                        (user_id, LEGACY_USER_ID)).rowcount
+        i = con.execute("UPDATE items SET user_id = ? WHERE user_id = ?",
+                        (user_id, LEGACY_USER_ID)).rowcount
+        con.commit()
+    finally:
+        con.close()
+    return t, i
+
+
+# --------------------------------------------------------------------------- tickets
+def known_ticket_ids(user_id: int) -> set[str]:
+    with connect() as con:
+        return {r[0] for r in con.execute(
+            "SELECT id FROM tickets WHERE user_id = ?", (user_id,))}
 
 
 def codes_needing_enrichment(force: bool = False) -> list[tuple[str, str]]:
@@ -131,45 +279,47 @@ def name_fix_stats() -> dict:
     return {"total": r[0] or 0, "devines": r[1] or 0}
 
 
-def _insert_items(con, ticket_id: str, date: str, detail: dict) -> int:
-    con.execute("DELETE FROM items WHERE ticket_id = ?", (ticket_id,))
+def _insert_items(con, user_id: int, ticket_id: str, date: str, detail: dict) -> int:
+    con.execute("DELETE FROM items WHERE user_id = ? AND ticket_id = ?", (user_id, ticket_id))
     items = parse_items(detail)
     con.executemany(
-        """INSERT INTO items (ticket_id, date, code, name, unit_price, quantity,
+        """INSERT INTO items (user_id, ticket_id, date, code, name, unit_price, quantity,
                               is_weight, amount, discount)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        [(ticket_id, date, i["code"], i["name"], i["unit_price"], i["quantity"],
+           VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        [(user_id, ticket_id, date, i["code"], i["name"], i["unit_price"], i["quantity"],
           i["is_weight"], i["amount"], i["discount"]) for i in items])
     return len(items)
 
 
-def save_ticket(summary: dict, detail: dict) -> int:
+def save_ticket(user_id: int, summary: dict, detail: dict) -> int:
     meta = ticket_meta(summary, detail)
     with connect() as con:
         con.execute(
-            """INSERT OR REPLACE INTO tickets (id, date, store, total, raw_summary, raw_detail)
-               VALUES (?,?,?,?,?,?)""",
-            (meta["id"], meta["date"], meta["store"], meta["total"],
+            """INSERT OR REPLACE INTO tickets (user_id, id, date, store, total, raw_summary, raw_detail)
+               VALUES (?,?,?,?,?,?,?)""",
+            (user_id, meta["id"], meta["date"], meta["store"], meta["total"],
              json.dumps(summary, ensure_ascii=False), json.dumps(detail, ensure_ascii=False)))
-        return _insert_items(con, meta["id"], meta["date"], detail)
+        return _insert_items(con, user_id, meta["id"], meta["date"], detail)
 
 
 def reparse_all() -> tuple[int, int]:
-    """Ré-analyse tous les tickets bruts stockés (après modification de parser.py)."""
+    """Ré-analyse les tickets bruts de tous les utilisateurs (après modification de parser.py)."""
     n_tickets = n_items = 0
     with connect() as con:
-        rows = con.execute("SELECT id, date, raw_detail FROM tickets").fetchall()
+        rows = con.execute("SELECT user_id, id, date, raw_detail FROM tickets").fetchall()
         for r in rows:
-            n_items += _insert_items(con, r["id"], r["date"], json.loads(r["raw_detail"]))
+            n_items += _insert_items(con, r["user_id"], r["id"], r["date"], json.loads(r["raw_detail"]))
             n_tickets += 1
     return n_tickets, n_items
 
 
 # --------------------------------------------------------------------------- lectures
-def stats() -> dict:
+def stats(user_id: int) -> dict:
     with connect() as con:
-        t = con.execute("SELECT COUNT(*), MIN(date), MAX(date), SUM(total) FROM tickets").fetchone()
-        n_items = con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        t = con.execute("SELECT COUNT(*), MIN(date), MAX(date), SUM(total) FROM tickets "
+                        "WHERE user_id = ?", (user_id,)).fetchone()
+        n_items = con.execute("SELECT COUNT(*) FROM items WHERE user_id = ?",
+                              (user_id,)).fetchone()[0]
     return {"tickets": t[0], "first_date": t[1], "last_date": t[2],
             "total_spent": round(t[3] or 0, 2), "items": n_items}
 
@@ -185,13 +335,14 @@ _SORT_KEYS = {
 }
 
 
-def products(query: str = "", group: str = "code", sort: str = "purchases") -> list[dict]:
+def products(user_id: int, query: str = "", group: str = "code",
+             sort: str = "purchases") -> list[dict]:
     key = _key_expr(group)
-    sql = f"SELECT {key} AS k, name, date, unit_price, is_weight FROM items"
-    params: list = []
+    sql = f"SELECT {key} AS k, name, date, unit_price, is_weight FROM items WHERE user_id = ?"
+    params: list = [user_id]
     if query:
-        sql += " WHERE name LIKE ? OR code LIKE ?"
-        params = [f"%{query}%", f"%{query}%"]
+        sql += " AND (name LIKE ? OR code LIKE ?)"
+        params += [f"%{query}%", f"%{query}%"]
     sql += " ORDER BY date"
     agg: dict[str, dict] = defaultdict(lambda: {"n": 0, "prices": []})
     with connect() as con:
@@ -225,34 +376,37 @@ def products(query: str = "", group: str = "code", sort: str = "purchases") -> l
     return out
 
 
-def product_history(key: str, group: str = "code") -> list[dict]:
+def product_history(user_id: int, key: str, group: str = "code") -> list[dict]:
     sql = f"""SELECT i.date, COALESCE(pl.label, nf.fixed_name, i.name) AS name, i.code,
                      i.unit_price, i.quantity, i.is_weight, i.amount, i.discount,
                      i.ticket_id, t.store
-              FROM items i JOIN tickets t ON t.id = i.ticket_id
+              FROM items i JOIN tickets t ON t.user_id = i.user_id AND t.id = i.ticket_id
               LEFT JOIN product_labels pl ON pl.code = i.code AND pl.status = 'matched'
               LEFT JOIN name_fixes nf ON nf.code = i.code
-              WHERE {_key_expr(group).replace('name', 'i.name').replace('code', 'i.code')} = ?
+              WHERE i.user_id = ?
+                AND {_key_expr(group).replace('name', 'i.name').replace('code', 'i.code')} = ?
               ORDER BY i.date"""
     with connect() as con:
-        return [dict(r) for r in con.execute(sql, (key,))]
+        return [dict(r) for r in con.execute(sql, (user_id, key))]
 
 
-def tickets(limit: int = 500) -> list[dict]:
+def tickets(user_id: int, limit: int = 500) -> list[dict]:
     with connect() as con:
         return [dict(r) for r in con.execute(
             """SELECT t.id, t.date, t.store, t.total, COUNT(i.id) AS n_items
-               FROM tickets t LEFT JOIN items i ON i.ticket_id = t.id
-               GROUP BY t.id ORDER BY t.date DESC LIMIT ?""", (limit,))]
+               FROM tickets t LEFT JOIN items i ON i.user_id = t.user_id AND i.ticket_id = t.id
+               WHERE t.user_id = ?
+               GROUP BY t.id ORDER BY t.date DESC LIMIT ?""", (user_id, limit))]
 
 
-def ticket_detail(ticket_id: str) -> dict | None:
+def ticket_detail(user_id: int, ticket_id: str) -> dict | None:
     """Lignes d'un ticket, enrichies du prix le plus ancien connu pour chaque
     référence (toute l'historique confondu), et du total reconstitué si
     chaque article avait été payé à ce prix le plus ancien."""
     with connect() as con:
         ticket = con.execute(
-            "SELECT id, date, store, total FROM tickets WHERE id = ?", (ticket_id,)).fetchone()
+            "SELECT id, date, store, total FROM tickets WHERE user_id = ? AND id = ?",
+            (user_id, ticket_id)).fetchone()
         if ticket is None:
             return None
         items = [dict(r) for r in con.execute(
@@ -262,7 +416,8 @@ def ticket_detail(ticket_id: str) -> dict | None:
                FROM items i
                LEFT JOIN product_labels pl ON pl.code = i.code AND pl.status = 'matched'
                LEFT JOIN name_fixes nf ON nf.code = i.code
-               WHERE i.ticket_id = ? ORDER BY i.id""", (ticket_id,))]
+               WHERE i.user_id = ? AND i.ticket_id = ? ORDER BY i.id""",
+            (user_id, ticket_id))]
 
         keys = {it["_key"] for it in items}
         first_by_key: dict[str, tuple[str, float]] = {}
@@ -274,8 +429,9 @@ def ticket_detail(ticket_id: str) -> dict | None:
                                ROW_NUMBER() OVER (PARTITION BY COALESCE(NULLIF(code, ''), name)
                                                    ORDER BY date ASC) AS rn
                         FROM items
-                        WHERE COALESCE(NULLIF(code, ''), name) IN ({placeholders})
-                    ) WHERE rn = 1""", tuple(keys)).fetchall()
+                        WHERE user_id = ?
+                          AND COALESCE(NULLIF(code, ''), name) IN ({placeholders})
+                    ) WHERE rn = 1""", (user_id, *keys)).fetchall()
             first_by_key = {r["k"]: (r["date"], r["unit_price"]) for r in rows}
 
     total_first = 0.0
@@ -297,9 +453,10 @@ def ticket_detail(ticket_id: str) -> dict | None:
     }
 
 
-def monthly_spending() -> list[dict]:
+def monthly_spending(user_id: int) -> list[dict]:
     with connect() as con:
         return [dict(r) for r in con.execute(
             """SELECT substr(date, 1, 7) AS month, ROUND(SUM(total), 2) AS total,
                       COUNT(*) AS tickets
-               FROM tickets GROUP BY month ORDER BY month""")]
+               FROM tickets WHERE user_id = ? GROUP BY month ORDER BY month""",
+            (user_id,))]

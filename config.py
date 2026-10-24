@@ -17,3 +17,16 @@ REQUEST_DELAY = float(os.getenv("LIDL_REQUEST_DELAY", "0.4"))
 
 # Pause entre deux requêtes Open Food Facts lors de l'enrichissement des libellés
 OFF_REQUEST_DELAY = float(os.getenv("OFF_REQUEST_DELAY", "1.0"))
+
+# --- Portail multi-utilisateur
+# Clé Fernet (urlsafe base64, 32 octets) qui chiffre les jetons Lidl en base.
+# Si absente, une clé est générée dans data/secret.key (usage local uniquement).
+SECRET_KEY = os.getenv("LIDL_SECRET_KEY", "")
+SECRET_KEY_PATH = DATA_DIR / "secret.key"
+
+# Code d'invitation exigé à l'inscription (vide = inscription libre)
+REGISTRATION_CODE = os.getenv("LIDL_REGISTRATION_CODE", "")
+
+# Cookie de session : mettre LIDL_COOKIE_SECURE=1 derrière HTTPS
+COOKIE_SECURE = os.getenv("LIDL_COOKIE_SECURE", "0") == "1"
+SESSION_DAYS = int(os.getenv("LIDL_SESSION_DAYS", "30"))

@@ -1,10 +1,13 @@
 """Commandes utilitaires en ligne de commande.
 
-  python manage.py login     # connexion (ouvre Chromium)
-  python manage.py sync      # télécharge les nouveaux tickets
-  python manage.py reparse   # ré-analyse les tickets bruts déjà stockés
-  python manage.py demo      # remplit la base avec des données fictives (test de l'IHM)
-  python manage.py dump ID   # affiche le JSON brut d'un ticket (pour ajuster parser.py)
+  python manage.py adduser EMAIL      # crée un compte du portail (mot de passe demandé)
+  python manage.py adopt EMAIL        # rattache à ce compte la base mono-utilisateur
+                                      # d'avant les comptes (tickets + data/token.json)
+  python manage.py login EMAIL        # connexion Lidl du compte (ouvre Chromium)
+  python manage.py sync EMAIL         # télécharge les nouveaux tickets du compte
+  python manage.py reparse            # ré-analyse les tickets bruts déjà stockés
+  python manage.py demo EMAIL         # remplit le compte avec des données fictives
+  python manage.py dump ID            # affiche le JSON brut d'un ticket (pour ajuster parser.py)
   python manage.py enrich [--force] [--limit N]
                              # cherche un libellé complet sur Open Food Facts
                              # pour chaque référence produit (--force : relance
@@ -13,24 +16,52 @@
                              # (caractère �) par motif contre notre propre
                              # vocabulaire ; sinon retire juste le caractère
 """
+import getpass
 import json
 import random
 import sys
 from datetime import datetime, timedelta
 
+import accounts
+import config
 import db
 from auth import TokenStore, interactive_login
 
 
-def cmd_login():
-    interactive_login(TokenStore())
+def _user_id(email: str) -> int:
+    user = db.user_by_email(email.strip().lower())
+    if user is None:
+        sys.exit(f"Compte inconnu : {email} (python manage.py adduser {email})")
+    return user["id"]
+
+
+def cmd_adduser(email):
+    password = getpass.getpass("Mot de passe : ")
+    accounts.register(email, password)
+    print(f"Compte créé : {email}")
+
+
+def cmd_adopt(email):
+    user_id = _user_id(email)
+    tickets, items = db.adopt_legacy(user_id)
+    print(f"{tickets} ticket(s), {items} ligne(s) rattaché(s) à {email}.")
+    legacy_token = config.DATA_DIR / "token.json"
+    if legacy_token.exists():
+        TokenStore(user_id).save(json.loads(legacy_token.read_text()))
+        legacy_token.unlink()
+        print("Jeton Lidl importé (chiffré) et data/token.json supprimé.")
+
+
+def cmd_login(email):
+    interactive_login(TokenStore(_user_id(email)))
     print("Connecté, jeton enregistré.")
 
 
-def cmd_sync():
+def cmd_sync(email):
     import app
-    app._sync_job()
-    print(app.state["sync"])
+    user_id = _user_id(email)
+    app._sync_job(user_id)
+    print(app.state_of(user_id)["sync"])
 
 
 def cmd_reparse():
@@ -61,7 +92,8 @@ def cmd_fixnames():
           f"{stats['guessed']} deviné(s) par vocabulaire, {stats['stripped']} juste nettoyé(s).")
 
 
-def cmd_demo():
+def cmd_demo(email):
+    user_id = _user_id(email)
     random.seed(1)
     catalog = [("0012345", "Lait demi-écrémé 1L", 0.89, False),
                ("0023456", "Beurre doux 250g", 1.79, False),
@@ -87,7 +119,7 @@ def cmd_demo():
         tid = f"DEMO{n:05d}"
         detail = {"id": tid, "date": day.isoformat(), "totalAmount": round(total, 2),
                   "store": {"name": "Lidl Démo", "locality": "Marseille"}, "itemsLine": lines}
-        db.save_ticket({"id": tid}, detail)
+        db.save_ticket(user_id, {"id": tid}, detail)
         day += timedelta(days=random.randint(5, 12))
         n += 1
     print(f"{n} tickets fictifs créés.")
@@ -95,9 +127,9 @@ def cmd_demo():
 
 if __name__ == "__main__":
     db.init()
-    cmds = {"login": cmd_login, "sync": cmd_sync, "reparse": cmd_reparse,
-            "demo": cmd_demo, "dump": cmd_dump, "enrich": cmd_enrich,
-            "fixnames": cmd_fixnames}
+    cmds = {"adduser": cmd_adduser, "adopt": cmd_adopt, "login": cmd_login,
+            "sync": cmd_sync, "reparse": cmd_reparse, "demo": cmd_demo,
+            "dump": cmd_dump, "enrich": cmd_enrich, "fixnames": cmd_fixnames}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
         print(__doc__)
         sys.exit(1)

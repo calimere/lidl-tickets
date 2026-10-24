@@ -52,16 +52,44 @@
   .progress i { display: block; height: 100%; background: var(--accent); border-radius: 2px; width: 0; }
   h2 { font-size: 16px; margin: 0 0 4px; }
   .hidden { display: none; }
+  #auth { max-width: 380px; margin: 80px auto; padding: 0 20px; }
+  #auth h1 { font-size: 20px; margin: 0 0 14px; }
+  #auth h1 span { background: var(--accent); color: var(--brand); padding: 1px 6px;
+                  border-radius: 4px; margin-right: 6px; }
+  #auth form { display: grid; gap: 10px; }
+  #auth button.link { background: none; color: var(--brand); font-weight: 400; padding: 4px;
+                      text-decoration: underline; }
+  #authErr { color: var(--up); min-height: 1.3em; }
+  header #who { font-size: 13px; opacity: .9; }
 </style>
 </head>
 <body>
+<div id="auth" class="hidden">
+  <div class="card">
+    <h1><span>Lidl</span>Suivi de mes tickets</h1>
+    <form id="authForm">
+      <input id="aEmail" type="email" placeholder="E-mail" autocomplete="username" required>
+      <input id="aPass" type="password" placeholder="Mot de passe (10 caractères min.)"
+             autocomplete="current-password" required>
+      <input id="aInvite" class="hidden" placeholder="Code d'invitation" autocomplete="off">
+      <div id="authErr"></div>
+      <button id="aSubmit" type="submit">Se connecter</button>
+      <button id="aToggle" type="button" class="link">Pas encore de compte ? S'inscrire</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="hidden">
 <header>
   <h1><span>Lidl</span>Suivi de mes tickets</h1>
   <div id="status">…</div>
   <div class="progress hidden" id="prog"><i></i></div>
   <button id="btnLogin">Se connecter à Lidl Plus</button>
   <button id="btnSync" disabled>Synchroniser</button>
-  <button id="btnLogout" class="ghost hidden">Déconnexion</button>
+  <button id="btnLogout" class="ghost hidden">Déconnecter Lidl</button>
+  <span id="who"></span>
+  <button id="btnPortalLogout" class="ghost">Quitter</button>
+  <button id="btnDelete" class="ghost" title="Supprime votre compte et toutes vos données">Supprimer mon compte</button>
 </header>
 
 <main>
@@ -131,6 +159,7 @@
     <canvas id="spendChart" height="110"></canvas>
   </section>
 </main>
+</div>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -139,9 +168,61 @@ const fdate = d => d ? new Date(d).toLocaleDateString("fr-FR") : "–";
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const api = async (url, opts) => {
   const r = await fetch(url, opts);
+  if (r.status === 401 && !url.startsWith("/api/auth/login")) showAuth();
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 };
+const post = (url, body) => api(url, {method: "POST", headers: {"Content-Type": "application/json"},
+  body: JSON.stringify(body ?? {})});
+
+// ------------------------------------------------------------------ compte du portail
+let registering = false;
+function showAuth() {
+  $("#app").classList.add("hidden");
+  $("#auth").classList.remove("hidden");
+  // ne rien laisser du compte précédent dans la page
+  ["#productRows", "#historyRows", "#ticketRows", "#ticketItems", "#ticketFoot"]
+    .forEach(sel => $(sel).innerHTML = "");
+  $("#pTitle").textContent = "Sélectionnez un produit";
+  $("#tTitle").textContent = "Sélectionnez un ticket";
+  priceChart?.destroy(); priceChart = null;
+  if (polling) { clearInterval(polling); polling = null; }
+}
+function setRegistering(on) {
+  registering = on;
+  $("#aSubmit").textContent = on ? "Créer mon compte" : "Se connecter";
+  $("#aToggle").textContent = on ? "J'ai déjà un compte" : "Pas encore de compte ? S'inscrire";
+  $("#aPass").autocomplete = on ? "new-password" : "current-password";
+  $("#aInvite").classList.toggle("hidden", !(on && inviteRequired));
+  $("#authErr").textContent = "";
+}
+let inviteRequired = false;
+$("#aToggle").onclick = () => setRegistering(!registering);
+$("#authForm").onsubmit = async e => {
+  e.preventDefault();
+  try {
+    await post(registering ? "/api/auth/register" : "/api/auth/login",
+      {email: $("#aEmail").value, password: $("#aPass").value, invite_code: $("#aInvite").value});
+    $("#aPass").value = "";
+    startApp();
+  } catch (err) { $("#authErr").textContent = err.message; }
+};
+$("#btnPortalLogout").onclick = async () => { await post("/api/auth/logout"); showAuth(); };
+$("#btnDelete").onclick = async () => {
+  if (!confirm("Supprimer définitivement votre compte, vos tickets et le lien avec Lidl Plus ?")) return;
+  await api("/api/account", {method: "DELETE"});
+  showAuth();
+};
+async function startApp() {
+  $("#auth").classList.add("hidden");
+  $("#app").classList.remove("hidden");
+  loadAll();
+}
+async function boot() {
+  inviteRequired = (await api("/api/config")).invite_required;
+  const r = await fetch("/api/auth/me");
+  if (r.ok) startApp(); else showAuth();
+}
 
 let priceChart, spendChart, polling = null, lastSyncRunning = false;
 
@@ -155,6 +236,7 @@ async function refreshStatus() {
   $("#kTotal").textContent = eur(st.total_spent);
   $("#kItems").textContent = st.items;
 
+  $("#who").textContent = s.email;
   $("#btnLogin").classList.toggle("hidden", s.logged_in);
   $("#btnLogout").classList.toggle("hidden", !s.logged_in);
   $("#btnSync").disabled = !s.logged_in || s.sync.running;
@@ -177,9 +259,9 @@ async function refreshStatus() {
   if (!busy && polling) { clearInterval(polling); polling = null; }
 }
 
-$("#btnLogin").onclick = async () => { await api("/api/login", {method: "POST"}); refreshStatus(); };
+$("#btnLogin").onclick = async () => { await api("/api/lidl/login", {method: "POST"}); refreshStatus(); };
 $("#btnSync").onclick = async () => { await api("/api/sync", {method: "POST"}); refreshStatus(); };
-$("#btnLogout").onclick = async () => { await api("/api/logout", {method: "POST"}); refreshStatus(); };
+$("#btnLogout").onclick = async () => { await api("/api/lidl/logout", {method: "POST"}); refreshStatus(); };
 
 // ------------------------------------------------------------------ onglets
 document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
@@ -286,7 +368,7 @@ async function loadSpending() {
 }
 
 function loadAll() { loadProducts(); loadTickets(); refreshStatus(); }
-loadAll();
+boot();
 </script>
 </body>
 </html>
