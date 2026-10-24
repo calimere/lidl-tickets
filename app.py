@@ -4,13 +4,15 @@ Lancement :  python app.py   puis ouvrir http://127.0.0.1:3006
 """
 from __future__ import annotations
 
+import io
 import threading
 import time
 import traceback
+import zipfile
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -18,7 +20,8 @@ import accounts
 import config
 import db
 from accounts import AccountError
-from auth import AuthError, TokenStore, interactive_login
+from auth import (AUTH_REQUEST_TTL, AuthError, TokenStore, complete_authorization,
+                  start_authorization)
 from lidl_client import LidlClient
 
 app = FastAPI(title="Suivi tickets Lidl")
@@ -39,17 +42,6 @@ def state_of(user_id: int) -> dict:
 
 
 # --------------------------------------------------------------------------- tâches de fond
-def _login_job(user_id: int):
-    state = state_of(user_id)
-    state["login"] = {"status": "running",
-                      "message": "Connectez-vous dans la fenêtre Chromium qui vient de s'ouvrir."}
-    try:
-        interactive_login(TokenStore(user_id))
-        state["login"] = {"status": "ok", "message": "Connecté."}
-    except Exception as e:  # noqa: BLE001
-        state["login"] = {"status": "error", "message": str(e)}
-
-
 def _sync_job(user_id: int):
     s = state_of(user_id)["sync"]
     s.update(running=True, done=0, total=0, error=None, message="Liste des tickets…")
@@ -152,20 +144,52 @@ def index():
 @app.get("/api/status")
 def status(user: dict = Depends(current_user)):
     state = state_of(user["id"])
+    login = state["login"]
+    if login["status"] == "running" and time.time() > login.get("expires_at", 0):
+        state["login"] = {"status": "error",
+                          "message": "Délai dépassé : relancez la connexion à Lidl Plus."}
     return {"logged_in": TokenStore(user["id"]).logged_in, "country": config.COUNTRY,
             "email": user["email"], "login": state["login"], "sync": state["sync"],
             "stats": db.stats(user["id"])}
 
 
-@app.post("/api/lidl/login")
-def lidl_login(user: dict = Depends(current_user)):
-    state = state_of(user["id"])
-    with lock:
-        if state["login"]["status"] == "running":
-            raise HTTPException(409, "Connexion déjà en cours.")
-        state["login"] = {"status": "running", "message": ""}
-    threading.Thread(target=_login_job, args=(user["id"],), daemon=True).start()
+@app.post("/api/lidl/start")
+def lidl_start(user: dict = Depends(current_user)):
+    """Prépare la connexion Lidl : l'extension ouvre l'URL et renvoie le code à /callback."""
+    url, state = start_authorization(user["id"])
+    state_of(user["id"])["login"] = {
+        "status": "running", "expires_at": time.time() + AUTH_REQUEST_TTL,
+        "message": "Connectez-vous à Lidl Plus dans l'onglet qui vient de s'ouvrir."}
+    return {"authorize_url": url, "state": state}
+
+
+class LidlCallback(BaseModel):
+    code: str
+    state: str
+
+
+@app.post("/api/lidl/callback")
+def lidl_callback(body: LidlCallback):
+    """Appelé par l'extension Chrome, sans cookie : le `state` à usage unique fait foi."""
+    try:
+        user_id = complete_authorization(body.state, body.code)
+    except AuthError as e:
+        raise HTTPException(400, str(e)) from None
+    state_of(user_id)["login"] = {"status": "ok", "message": "Connecté."}
     return {"ok": True}
+
+
+@app.get("/extension.zip")
+def extension_zip():
+    """L'extension Chrome, à décompresser puis charger via chrome://extensions."""
+    buf = io.BytesIO()
+    root = config.BASE_DIR / "extension"
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in sorted(root.rglob("*")):
+            if f.is_file() and not f.name.endswith(".test.js"):
+                z.write(f, f"lidl-tickets-extension/{f.relative_to(root).as_posix()}")
+    return RawResponse(buf.getvalue(), media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="lidl-tickets-extension.zip"'})
 
 
 @app.post("/api/lidl/logout")

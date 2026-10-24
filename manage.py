@@ -3,7 +3,6 @@
   python manage.py adduser EMAIL      # crée un compte du portail (mot de passe demandé)
   python manage.py adopt EMAIL        # rattache à ce compte la base mono-utilisateur
                                       # d'avant les comptes (tickets + data/token.json)
-  python manage.py login EMAIL        # connexion Lidl du compte (ouvre Chromium)
   python manage.py sync EMAIL         # télécharge les nouveaux tickets du compte
   python manage.py reparse            # ré-analyse les tickets bruts déjà stockés
   python manage.py demo EMAIL         # remplit le compte avec des données fictives
@@ -25,7 +24,7 @@ from datetime import datetime, timedelta
 import accounts
 import config
 import db
-from auth import TokenStore, interactive_login
+from auth import TokenStore
 
 
 def _user_id(email: str) -> int:
@@ -50,11 +49,6 @@ def cmd_adopt(email):
         TokenStore(user_id).save(json.loads(legacy_token.read_text()))
         legacy_token.unlink()
         print("Jeton Lidl importé (chiffré) et data/token.json supprimé.")
-
-
-def cmd_login(email):
-    interactive_login(TokenStore(_user_id(email)))
-    print("Connecté, jeton enregistré.")
 
 
 def cmd_sync(email):
@@ -127,7 +121,7 @@ def cmd_demo(email):
 
 if __name__ == "__main__":
     db.init()
-    cmds = {"adduser": cmd_adduser, "adopt": cmd_adopt, "login": cmd_login,
+    cmds = {"adduser": cmd_adduser, "adopt": cmd_adopt,
             "sync": cmd_sync, "reparse": cmd_reparse, "demo": cmd_demo,
             "dump": cmd_dump, "enrich": cmd_enrich, "fixnames": cmd_fixnames}
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:

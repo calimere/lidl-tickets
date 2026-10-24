@@ -10,7 +10,6 @@ cd lidl-tickets
 python -m venv .venv
 source .venv/bin/activate        # Windows : .venv\Scripts\activate
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 ## Utilisation
@@ -23,9 +22,10 @@ Ouvrez http://127.0.0.1:3006 puis :
 
 0. **Créer un compte** du portail (e-mail + mot de passe de 10 caractères minimum).
    Chaque compte a ses propres tickets et son propre lien avec Lidl Plus.
-1. **Se connecter à Lidl Plus** : une fenêtre Chromium s'ouvre sur la page de
-   connexion Lidl. Saisissez vous-même e-mail/téléphone, mot de passe et code de
-   vérification. La fenêtre se ferme toute seule une fois connecté.
+1. **Se connecter à Lidl Plus** : un onglet s'ouvre sur la vraie page de connexion
+   Lidl, dans votre navigateur. Saisissez vous-même e-mail/téléphone, mot de passe et
+   code de vérification ; l'onglet se ferme tout seul une fois connecté. Cela exige
+   l'**extension Chrome** du projet (voir ci-dessous).
 2. **Synchroniser** : télécharge tous les tickets (seuls les nouveaux lors des
    synchronisations suivantes).
 3. Onglet **Produits & prix** : cliquez sur un produit pour voir la courbe de son
@@ -34,6 +34,33 @@ Ouvrez http://127.0.0.1:3006 puis :
    (utile si Lidl a changé la référence d'un produit).
 
 Pour tester l'interface sans compte : `python manage.py demo` (données fictives).
+
+## Extension Chrome
+
+Le portail ne peut pas récupérer lui-même la redirection finale de Lidl
+(`com.lidlplus.app://callback?code=…`, un schéma d'application mobile). L'extension
+(`extension/`, Manifest V3) s'en charge :
+
+1. Le portail prépare une demande PKCE avec un `state` à usage unique
+   (`POST /api/lidl/start`) et la transmet à l'extension via la page.
+2. L'extension ouvre la page de connexion Lidl dans un nouvel onglet ; vous vous
+   connectez normalement (mot de passe, SMS, captcha).
+3. Elle repère la redirection finale **dans cet onglet uniquement** et envoie
+   `{code, state}` à `POST /api/lidl/callback`. Le portail échange le code contre un
+   jeton avec le `verifier` gardé côté serveur.
+
+Installation (testeurs) : le portail propose le zip sur `/extension.zip`, à
+décompresser puis à charger via `chrome://extensions` (mode développeur →
+« Charger l'extension non empaquetée »).
+
+Origines du portail : `extension/manifest.json` (`host_permissions` et
+`content_scripts.matches`) liste `lidl-tickets.csk-prod.fr` et `localhost:3006` ;
+adaptez-les si le portail change de domaine.
+
+Sécurité : l'extension n'agit que pour une connexion demandée par le portail (message
+du content script) et uniquement dans l'onglet qu'elle a ouvert, avec le `state`
+annoncé. Sans cela, un site tiers pourrait faire lier le compte Lidl d'une victime au
+compte portail de l'attaquant. Tests : `node --test extension/lib.test.js`.
 
 ## Comptes et migration
 
@@ -87,11 +114,12 @@ Les tickets bruts étant tous conservés, aucune donnée n'est perdue.
 |---|---|
 | `app.py` | serveur FastAPI (API + IHM) |
 | `accounts.py` | comptes du portail : mots de passe (argon2), sessions, chiffrement |
-| `auth.py` | connexion OAuth/PKCE via Chromium, gestion du jeton Lidl |
+| `auth.py` | demande PKCE/échange du code, gestion du jeton Lidl |
+| `extension/` | extension Chrome qui capte le code de connexion Lidl |
 | `lidl_client.py` | appels à l'API tickets |
 | `parser.py` | extraction des lignes produit d'un ticket |
 | `db.py` | base SQLite et requêtes d'analyse |
-| `manage.py` | commandes : login, sync, reparse, demo, dump |
+| `manage.py` | commandes : adduser, adopt, sync, reparse, demo, dump |
 | `static/index.html` | interface web (Chart.js) |
 
 Variables d'environnement : `LIDL_COUNTRY` (défaut `FR`), `LIDL_LANGUAGE` (`fr`),

@@ -93,6 +93,22 @@
 </header>
 
 <main>
+  <section id="extHelp" class="card hidden" style="margin-bottom:16px">
+    <h2>Extension Chrome requise</h2>
+    <p id="extMsg" class="muted" style="margin:4px 0 8px">
+      Pour relier votre compte Lidl Plus, une petite extension Chrome capte le code de
+      connexion renvoyé par Lidl (elle ne voit ni votre mot de passe ni vos pages).</p>
+    <ol style="margin:0 0 10px;padding-left:20px">
+      <li><a href="/extension.zip">Téléchargez l'extension</a> et décompressez le zip.</li>
+      <li>Dans Chrome, ouvrez <code>chrome://extensions</code> et activez le
+          <b>mode développeur</b>.</li>
+      <li>Cliquez sur <b>Charger l'extension non empaquetée</b> et choisissez le dossier
+          décompressé.</li>
+      <li>Rechargez cette page, puis cliquez de nouveau sur « Se connecter à Lidl Plus ».</li>
+    </ol>
+    <button id="extClose" class="ghost" style="color:var(--brand);border-color:var(--line)">Fermer</button>
+  </section>
+
   <section class="kpis">
     <div class="card kpi"><small>Tickets</small><b id="kTickets">–</b></div>
     <div class="card kpi"><small>Période</small><b id="kPeriod">–</b></div>
@@ -259,7 +275,31 @@ async function refreshStatus() {
   if (!busy && polling) { clearInterval(polling); polling = null; }
 }
 
-$("#btnLogin").onclick = async () => { await api("/api/lidl/login", {method: "POST"}); refreshStatus(); };
+// ------------------------------------------------------------------ connexion Lidl (via l'extension)
+const extInstalled = () => !!document.documentElement.dataset.lidlExtension;
+function showExtHelp(error) {
+  $("#extHelp").classList.remove("hidden");
+  if (error) $("#extMsg").textContent = "⚠ " + error;
+}
+$("#extClose").onclick = () => $("#extHelp").classList.add("hidden");
+$("#btnLogin").onclick = async () => {
+  if (!extInstalled()) return showExtHelp();
+  try {
+    const {authorize_url, state} = await post("/api/lidl/start");
+    window.postMessage({source: "lidl-portal", type: "start", url: authorize_url, state}, location.origin);
+  } catch (e) { showExtHelp(e.message); }
+  refreshStatus();
+};
+window.addEventListener("message", e => {
+  if (e.source !== window || e.origin !== location.origin) return;
+  const m = e.data;
+  if (!m || m.source !== "lidl-extension") return;
+  if (m.type === "started" && !m.ok) showExtHelp(m.error || "L'extension n'a pas pu ouvrir Lidl.");
+  if (m.type === "result") {
+    if (m.ok) $("#extHelp").classList.add("hidden"); else showExtHelp(m.error);
+    refreshStatus();
+  }
+});
 $("#btnSync").onclick = async () => { await api("/api/sync", {method: "POST"}); refreshStatus(); };
 $("#btnLogout").onclick = async () => { await api("/api/lidl/logout", {method: "POST"}); refreshStatus(); };
 

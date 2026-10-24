@@ -16,7 +16,8 @@ def test_routes_require_login(client):
                 "/api/tickets/T1", "/api/auth/me"):
         assert client.get(url).status_code == 401, url
     assert client.post("/api/sync").status_code == 401
-    assert client.post("/api/lidl/login").status_code == 401
+    assert client.post("/api/lidl/start").status_code == 401
+    assert client.post("/api/lidl/logout").status_code == 401
     assert client.delete("/api/account").status_code == 401
 
 

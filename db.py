@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS lidl_tokens (
     payload    TEXT NOT NULL,          -- JSON chiffré (Fernet)
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS lidl_auth_requests (
+    state_hash TEXT PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    verifier   TEXT NOT NULL,          -- verifier PKCE chiffré (Fernet)
+    expires_at REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tickets (
     user_id     INTEGER NOT NULL,
     id          TEXT NOT NULL,
@@ -173,6 +179,7 @@ def delete_user(user_id: int) -> None:
         con.execute("DELETE FROM items WHERE user_id = ?", (user_id,))
         con.execute("DELETE FROM tickets WHERE user_id = ?", (user_id,))
         con.execute("DELETE FROM lidl_tokens WHERE user_id = ?", (user_id,))
+        con.execute("DELETE FROM lidl_auth_requests WHERE user_id = ?", (user_id,))
         con.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
         con.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
@@ -195,6 +202,24 @@ def save_lidl_token(user_id: int, payload: str) -> None:
 def delete_lidl_token(user_id: int) -> None:
     with connect() as con:
         con.execute("DELETE FROM lidl_tokens WHERE user_id = ?", (user_id,))
+
+
+def save_auth_request(state_hash: str, user_id: int, verifier: str, expires_at: float) -> None:
+    """Une seule demande en cours par utilisateur : la nouvelle remplace l'ancienne."""
+    with connect() as con:
+        con.execute("DELETE FROM lidl_auth_requests WHERE user_id = ? OR expires_at < CAST(strftime('%s','now') AS INTEGER)",
+                    (user_id,))
+        con.execute("INSERT INTO lidl_auth_requests (state_hash, user_id, verifier, expires_at) "
+                    "VALUES (?,?,?,?)", (state_hash, user_id, verifier, expires_at))
+
+
+def pop_auth_request(state_hash: str, now: float) -> dict | None:
+    """Lit puis supprime la demande (usage unique), si elle n'a pas expiré."""
+    with connect() as con:
+        r = con.execute("SELECT user_id, verifier, expires_at FROM lidl_auth_requests "
+                        "WHERE state_hash = ?", (state_hash,)).fetchone()
+        con.execute("DELETE FROM lidl_auth_requests WHERE state_hash = ?", (state_hash,))
+        return dict(r) if r and r["expires_at"] > now else None
 
 
 def adopt_legacy(user_id: int) -> tuple[int, int]:

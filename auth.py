@@ -1,10 +1,11 @@
 """Authentification Lidl Plus (OAuth2 + PKCE, comme l'application mobile).
 
-Principe : on ouvre une vraie fenêtre Chromium sur la page de connexion Lidl.
-C'est VOUS qui saisissez identifiant, mot de passe et code de vérification
-(SMS/e-mail, captcha éventuel). L'outil ne voit jamais votre mot de passe :
-il intercepte seulement la redirection finale contenant le code d'autorisation,
-puis l'échange contre un jeton (refresh token), stocké chiffré en base pour l'utilisateur.
+Principe : le portail prépare une demande d'autorisation (PKCE + `state`) et
+l'utilisateur se connecte sur la vraie page Lidl, dans son propre navigateur
+(mot de passe, SMS, captcha : le portail ne les voit jamais). L'extension Chrome
+du projet repère la redirection finale `com.lidlplus.app://callback?code=...`
+et renvoie le code au portail, qui l'échange contre un jeton (refresh token)
+stocké chiffré en base pour l'utilisateur.
 """
 from __future__ import annotations
 
@@ -95,12 +96,21 @@ class TokenStore:
 
 
 # --------------------------------------------------------------------------- connexion
-def interactive_login(store: TokenStore, country: str = config.COUNTRY,
-                      language: str = config.LANGUAGE, timeout: int = 600) -> None:
-    """Ouvre Chromium, attend que l'utilisateur se connecte, récupère le jeton."""
-    from playwright.sync_api import sync_playwright
+AUTH_REQUEST_TTL = 600   # secondes : durée de validité d'une demande de connexion
 
+
+def _hash_state(state: str) -> str:
+    return hashlib.sha256(state.encode()).hexdigest()
+
+
+def start_authorization(user_id: int, country: str = config.COUNTRY,
+                        language: str = config.LANGUAGE) -> tuple[str, str]:
+    """Prépare une connexion Lidl pour cet utilisateur. Retourne (url_autorisation, state).
+
+    Le `state` est un secret à usage unique : il est la seule preuve, côté
+    callback, que le code reçu appartient bien à cet utilisateur."""
     verifier, challenge = _pkce_pair()
+    state = secrets.token_urlsafe(32)
     params = {
         "client_id": CLIENT_ID,
         "response_type": "code",
@@ -108,70 +118,27 @@ def interactive_login(store: TokenStore, country: str = config.COUNTRY,
         "redirect_uri": REDIRECT_URI,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
+        "state": state,
         "Country": country.upper(),
         "language": f"{language.lower()}-{country.upper()}",
     }
-    authorize_url = f"{ACCOUNTS_URL}/connect/authorize?{urlencode(params)}"
-    found: dict = {}
+    db.save_auth_request(_hash_state(state), user_id, accounts.encrypt(verifier),
+                         time.time() + AUTH_REQUEST_TTL)
+    return f"{ACCOUNTS_URL}/connect/authorize?{urlencode(params)}", state
 
-    def inspect(url: str | None) -> None:
-        if url and url.startswith(REDIRECT_URI) and "code" not in found:
-            code = parse_qs(urlparse(url).query).get("code")
-            if code:
-                found["code"] = code[0]
 
-    with sync_playwright() as p:
-        # channel="chrome" : utilise votre vrai Chrome installé plutôt que le
-        # Chromium embarqué de Playwright, et on retire les marqueurs
-        # d'automatisation les plus visibles (navigator.webdriver, bannière
-        # "contrôlé par un logiciel de test"), car la page de connexion Lidl
-        # les détecte et affiche une fausse page de "surcapacité" à la place
-        # du vrai formulaire.
-        try:
-            browser = p.chromium.launch(
-                headless=False,
-                channel="chrome",
-                args=["--disable-blink-features=AutomationControlled"],
-                ignore_default_args=["--enable-automation"],
-            )
-        except Exception:
-            # Chrome non installé : repli sur le Chromium embarqué
-            browser = p.chromium.launch(
-                headless=False,
-                args=["--disable-blink-features=AutomationControlled"],
-                ignore_default_args=["--enable-automation"],
-            )
-        page = browser.new_page()
-        # La redirection vers com.lidlplus.app:// arrive dans l'en-tête Location
-        page.on("response", lambda r: inspect(r.headers.get("location")))
-        page.on("request", lambda r: inspect(r.url))
-        page.on("framenavigated", lambda f: inspect(f.url))
-        try:
-            page.goto(authorize_url)
-        except Exception:
-            pass
-        deadline = time.time() + timeout
-        while "code" not in found and time.time() < deadline:
-            try:
-                if page.is_closed():
-                    break
-                page.wait_for_timeout(500)
-            except Exception:
-                break
-        try:
-            browser.close()
-        except Exception:
-            pass
-
-    if "code" not in found:
-        raise AuthError("Connexion annulée ou expirée (fenêtre fermée avant la fin).")
-
+def complete_authorization(state: str, code: str) -> int:
+    """Échange le code reçu par l'extension contre un jeton. Retourne l'user_id."""
+    req = db.pop_auth_request(_hash_state(state), time.time())
+    if req is None:
+        raise AuthError("Demande de connexion inconnue ou expirée : recommencez.")
     r = requests.post(f"{ACCOUNTS_URL}/connect/token", headers=_basic_auth_header(),
                       data={"grant_type": "authorization_code",
-                            "code": found["code"],
+                            "code": code,
                             "redirect_uri": REDIRECT_URI,
-                            "code_verifier": verifier},
+                            "code_verifier": accounts.decrypt(req["verifier"])},
                       timeout=30)
     if r.status_code != 200:
-        raise AuthError(f"Échange du code refusé ({r.status_code}) : {r.text[:200]}")
-    store.save(r.json())
+        raise AuthError(f"Échange du code refusé par Lidl ({r.status_code}).")
+    TokenStore(req["user_id"]).save(r.json())
+    return req["user_id"]
