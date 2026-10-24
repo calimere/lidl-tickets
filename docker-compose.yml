@@ -1,0 +1,41 @@
+# Production :  cp .env.example .env  (remplir)  puis  docker compose up -d --build
+#
+# Deux façons d'exposer le portail :
+#  - votre reverse proxy existant (nginx, Traefik…) vers 127.0.0.1:3006 ;
+#  - ou Caddy inclus (HTTPS automatique) :  docker compose --profile caddy up -d --build
+
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      LIDL_SECRET_KEY: ${LIDL_SECRET_KEY:?Définissez LIDL_SECRET_KEY dans .env}
+      LIDL_REGISTRATION_CODE: ${LIDL_REGISTRATION_CODE:-}
+      LIDL_COOKIE_SECURE: ${LIDL_COOKIE_SECURE:-1}
+      LIDL_COUNTRY: ${LIDL_COUNTRY:-FR}
+      LIDL_LANGUAGE: ${LIDL_LANGUAGE:-fr}
+    volumes:
+      - lidl-data:/data
+    # Visible uniquement depuis l'hôte : le reverse proxy fait l'HTTPS
+    ports:
+      - "127.0.0.1:${LIDL_PORT:-3006}:3006"
+
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  lidl-data:
+  caddy-data:
+  caddy-config:

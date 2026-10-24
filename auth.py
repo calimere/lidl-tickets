@@ -23,6 +23,10 @@ import accounts
 import config
 import db
 
+if config.USE_SYSTEM_CA:
+    import truststore
+    truststore.inject_into_ssl()
+
 ACCOUNTS_URL = "https://accounts.lidl.com"
 CLIENT_ID = "LidlPlusNativeClient"
 REDIRECT_URI = "com.lidlplus.app://callback"
@@ -85,10 +89,13 @@ class TokenStore:
         return self.data["access_token"]
 
     def refresh(self) -> None:
-        r = requests.post(f"{ACCOUNTS_URL}/connect/token", headers=_basic_auth_header(),
-                          data={"grant_type": "refresh_token",
-                                "refresh_token": self.data["refresh_token"]},
-                          timeout=30)
+        try:
+            r = requests.post(f"{ACCOUNTS_URL}/connect/token", headers=_basic_auth_header(),
+                              data={"grant_type": "refresh_token",
+                                    "refresh_token": self.data["refresh_token"]},
+                              timeout=30)
+        except requests.RequestException as e:
+            raise AuthError(f"Lidl injoignable ({type(e).__name__}).") from e
         if r.status_code != 200:
             raise AuthError(f"Rafraîchissement du jeton refusé ({r.status_code}). "
                             "Reconnectez-vous.")
@@ -132,12 +139,17 @@ def complete_authorization(state: str, code: str) -> int:
     req = db.pop_auth_request(_hash_state(state), time.time())
     if req is None:
         raise AuthError("Demande de connexion inconnue ou expirée : recommencez.")
-    r = requests.post(f"{ACCOUNTS_URL}/connect/token", headers=_basic_auth_header(),
-                      data={"grant_type": "authorization_code",
-                            "code": code,
-                            "redirect_uri": REDIRECT_URI,
-                            "code_verifier": accounts.decrypt(req["verifier"])},
-                      timeout=30)
+    try:
+        r = requests.post(f"{ACCOUNTS_URL}/connect/token", headers=_basic_auth_header(),
+                          data={"grant_type": "authorization_code",
+                                "code": code,
+                                "redirect_uri": REDIRECT_URI,
+                                "code_verifier": accounts.decrypt(req["verifier"])},
+                          timeout=30)
+    except requests.RequestException as e:
+        # Le code Lidl est à usage unique et le state est consommé : il faut recommencer.
+        raise AuthError(f"Lidl injoignable depuis le serveur ({type(e).__name__}) : "
+                        "relancez la connexion.") from e
     if r.status_code != 200:
         raise AuthError(f"Échange du code refusé par Lidl ({r.status_code}).")
     TokenStore(req["user_id"]).save(r.json())

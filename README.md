@@ -79,7 +79,9 @@ python manage.py adopt moi@example.com    # tickets + data/token.json
   `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`,
   sinon une clé est créée dans `data/secret.key`), `LIDL_REGISTRATION_CODE`
   (code d'invitation exigé à l'inscription), `LIDL_COOKIE_SECURE=1` (derrière HTTPS),
-  `LIDL_SESSION_DAYS`.
+  `LIDL_SESSION_DAYS`,
+  `LIDL_USE_SYSTEM_CA=1` (si un antivirus type Avast inspecte le HTTPS : erreur
+  `unable to get local issuer certificate` lors de la connexion Lidl).
 
 ## Sécurité et confidentialité
 

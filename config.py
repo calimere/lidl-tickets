@@ -12,6 +12,12 @@ TOKEN_PATH = DATA_DIR / "token.json"   # contient le refresh token : NE PAS part
 COUNTRY = os.getenv("LIDL_COUNTRY", "FR")      # code pays du compte Lidl Plus
 LANGUAGE = os.getenv("LIDL_LANGUAGE", "fr")    # langue
 
+# Valider les certificats TLS avec le magasin du système plutôt qu'avec certifi.
+# Nécessaire si un antivirus (Avast, Kaspersky…) ou un proxy d'entreprise inspecte le
+# HTTPS : son certificat racine n'est que dans le magasin du système (sinon erreur
+# « unable to get local issuer certificate »). Inutile sur un serveur.
+USE_SYSTEM_CA = os.getenv("LIDL_USE_SYSTEM_CA", "0") == "1"
+
 # Pause entre deux téléchargements de tickets (secondes), pour rester poli avec le serveur
 REQUEST_DELAY = float(os.getenv("LIDL_REQUEST_DELAY", "0.4"))
 

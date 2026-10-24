@@ -4,3 +4,4 @@ requests>=2.31
 beautifulsoup4>=4.12
 argon2-cffi>=23.1
 cryptography>=42
+truststore>=0.9

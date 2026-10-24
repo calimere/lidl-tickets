@@ -5,6 +5,7 @@ Lancement :  python app.py   puis ouvrir http://127.0.0.1:3006
 from __future__ import annotations
 
 import io
+import os
 import threading
 import time
 import traceback
@@ -242,4 +243,4 @@ def spending(user: dict = Depends(current_user)):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=3006)
+    uvicorn.run(app, host=os.getenv("LIDL_HOST", "127.0.0.1"), port=3006)

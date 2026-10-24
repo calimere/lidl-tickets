@@ -122,3 +122,16 @@ def test_extension_zip(client):
     assert "lidl-tickets-extension/manifest.json" in names
     assert "lidl-tickets-extension/background.js" in names
     assert not any(n.endswith(".test.js") for n in names)
+
+
+def test_callback_network_error_is_not_a_500(client, monkeypatch):
+    import requests
+    register(client)
+    body = start(client)
+
+    def boom(*a, **k):
+        raise requests.exceptions.SSLError("certificate verify failed")
+
+    monkeypatch.setattr("auth.requests.post", boom)
+    r = client.post("/api/lidl/callback", json={"code": "c", "state": body["state"]})
+    assert r.status_code == 400 and "injoignable" in r.json()["detail"]
