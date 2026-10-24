@@ -6,7 +6,9 @@
 //
 // La page détecte l'extension grâce à l'attribut data-lidl-extension de <html>.
 
-document.documentElement.dataset.lidlExtension = chrome.runtime.getManifest().version;
+const api = globalThis.browser ?? globalThis.chrome;
+
+document.documentElement.dataset.lidlExtension = api.runtime.getManifest().version;
 
 const reply = (message) =>
   window.postMessage({ source: "lidl-extension", ...message }, location.origin);
@@ -17,13 +19,13 @@ window.addEventListener("message", async (event) => {
   const msg = event.data;
   if (!msg || msg.source !== "lidl-portal" || msg.type !== "start") return;
   try {
-    const res = await chrome.runtime.sendMessage({ type: "start", url: msg.url, state: msg.state });
+    const res = await api.runtime.sendMessage({ type: "start", url: msg.url, state: msg.state });
     reply({ type: "started", ok: !!res?.ok, error: res?.error });
   } catch (e) {
     reply({ type: "started", ok: false, error: String(e) });
   }
 });
 
-chrome.runtime.onMessage.addListener((msg) => {
+api.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "result") reply({ type: "result", ok: msg.ok, error: msg.error });
 });

@@ -110,19 +110,57 @@
 
 <main>
   <section id="extHelp" class="card hidden" style="margin-bottom:16px">
-    <h2>Extension Chrome requise</h2>
-    <p id="extMsg" class="muted" style="margin:4px 0 8px">
-      Pour relier votre compte Lidl Plus, une petite extension Chrome capte le code de
-      connexion renvoyé par Lidl (elle ne voit ni votre mot de passe ni vos pages).</p>
-    <ol style="margin:0 0 10px;padding-left:20px">
-      <li><a href="/extension.zip">Téléchargez l'extension</a> et décompressez le zip.</li>
-      <li>Dans Chrome, ouvrez <code>chrome://extensions</code> et activez le
-          <b>mode développeur</b>.</li>
-      <li>Cliquez sur <b>Charger l'extension non empaquetée</b> et choisissez le dossier
-          décompressé.</li>
-      <li>Rechargez cette page, puis cliquez de nouveau sur « Se connecter à Lidl Plus ».</li>
-    </ol>
-    <button id="extClose" class="ghost" style="color:var(--brand);border-color:var(--line)">Fermer</button>
+    <h2>Relier mon compte Lidl Plus</h2>
+    <p id="extMsg" class="muted" style="margin:4px 0 10px">
+      Lidl ne permet de se connecter que depuis son application mobile : il faut donc récupérer
+      le code de connexion qu'il renvoie. Vous saisissez vos identifiants sur la vraie page
+      Lidl ; le portail ne les voit jamais.</p>
+
+    <details id="extInstall" open>
+      <summary><b>Option 1 – Extension (recommandée)</b> · Chrome, Edge, Brave, Firefox</summary>
+      <ol data-browser="chrome" style="margin:8px 0">
+        <li><a href="/extension.zip?browser=chrome">Téléchargez l'extension</a> et décompressez le zip.</li>
+        <li>Ouvrez <code>chrome://extensions</code> et activez le <b>mode développeur</b>.</li>
+        <li><b>Charger l'extension non empaquetée</b> → choisissez le dossier décompressé.</li>
+        <li>Rechargez cette page, puis cliquez de nouveau sur « Se connecter à Lidl Plus ».</li>
+      </ol>
+      <ol data-browser="firefox" class="hidden" style="margin:8px 0">
+        <li id="fxSigned" class="hidden"><a href="/extension.xpi"><b>Installer pour Firefox</b></a>
+          et acceptez l'ajout, puis rechargez cette page.</li>
+        <li class="fxTemp"><a href="/extension.zip?browser=firefox">Téléchargez l'extension</a> et
+          décompressez le zip.</li>
+        <li class="fxTemp">Ouvrez <code>about:debugging#/runtime/this-firefox</code> →
+          <b>Charger un module complémentaire temporaire…</b> → choisissez le fichier
+          <code>manifest.json</code> du dossier décompressé (à refaire après chaque redémarrage
+          de Firefox).</li>
+        <li class="fxTemp">Rechargez cette page, puis cliquez de nouveau sur « Se connecter à Lidl Plus ».</li>
+      </ol>
+      <p class="muted" style="margin:0 0 6px">
+        <a href="#" id="otherBrowser">Afficher les étapes pour <span id="otherName">Firefox</span></a></p>
+    </details>
+
+    <details id="manual" style="margin-top:8px">
+      <summary><b>Option 2 – Connexion manuelle</b> · sans extension, tout navigateur (ordinateur)</summary>
+      <ol style="margin:8px 0">
+        <li><button id="manualStart" class="ghost" style="color:var(--brand);border-color:var(--line)">
+          Ouvrir la page de connexion Lidl</button> (nouvel onglet).</li>
+        <li>Dans cet onglet, ouvrez les outils de développement (<b>F12</b>) → onglet
+          <b>Réseau</b> (cochez « Conserver les journaux »), <i>avant</i> de vous connecter.</li>
+        <li>Connectez-vous. La page se bloque à la fin : c'est normal.</li>
+        <li>Dans l'onglet Réseau, trouvez la dernière requête dont l'en-tête
+          <code>Location</code> (ou l'adresse) commence par
+          <code>com.lidlplus.app://callback?code=…</code> et copiez cette adresse complète.</li>
+        <li>Collez-la ici :
+          <div class="toolbar" style="margin-top:6px">
+            <input id="pasteUrl" placeholder="com.lidlplus.app://callback?code=…" autocomplete="off">
+            <button id="pasteGo">Valider</button></div></li>
+      </ol>
+      <p class="muted" style="margin:0 0 4px">Le lien est à usage unique et expire après 10 minutes.
+        <b>Safari</b> : activez d'abord Réglages → Avancé → « Afficher le menu Développement »,
+        puis Développement → Afficher l'inspecteur web (onglet Réseau).</p>
+    </details>
+    <div style="margin-top:12px">
+      <button id="extClose" class="ghost" style="color:var(--brand);border-color:var(--line)">Fermer</button></div>
   </section>
 
   <section class="kpis">
@@ -265,7 +303,9 @@ async function startApp() {
   loadAll();
 }
 async function boot() {
-  inviteRequired = (await api("/api/config")).invite_required;
+  const cfg = await api("/api/config");
+  inviteRequired = cfg.invite_required;
+  firefoxXpi = cfg.firefox_xpi;
   const r = await fetch("/api/auth/me");
   if (r.ok) startApp(); else showAuth();
 }
@@ -309,13 +349,40 @@ async function refreshStatus() {
 
 // ------------------------------------------------------------------ connexion Lidl (via l'extension)
 const extInstalled = () => !!document.documentElement.dataset.lidlExtension;
+let firefoxXpi = false;
+const isFirefox = /firefox/i.test(navigator.userAgent);
+function showSteps(browser) {
+  document.querySelectorAll("#extInstall ol[data-browser]").forEach(ol =>
+    ol.classList.toggle("hidden", ol.dataset.browser !== browser));
+  $("#otherName").textContent = browser === "firefox" ? "Chrome / Edge / Brave" : "Firefox";
+  $("#otherBrowser").dataset.next = browser === "firefox" ? "chrome" : "firefox";
+  $("#fxSigned").classList.toggle("hidden", !firefoxXpi);
+  document.querySelectorAll(".fxTemp").forEach(li => li.classList.toggle("hidden", firefoxXpi));
+}
 function showExtHelp(error) {
   $("#extHelp").classList.remove("hidden");
+  showSteps(isFirefox ? "firefox" : "chrome");
   if (error) $("#extMsg").textContent = "⚠ " + error;
 }
+$("#otherBrowser").onclick = e => { e.preventDefault(); showSteps(e.currentTarget.dataset.next); };
+$("#manualStart").onclick = async () => {
+  try {
+    const {authorize_url} = await post("/api/lidl/start");
+    window.open(authorize_url, "_blank", "noopener");
+    refreshStatus();
+  } catch (e) { $("#extMsg").textContent = "⚠ " + e.message; }
+};
+$("#pasteGo").onclick = async () => {
+  try {
+    await post("/api/lidl/paste", {url: $("#pasteUrl").value});
+    $("#pasteUrl").value = "";
+    $("#extHelp").classList.add("hidden");
+  } catch (e) { $("#extMsg").textContent = "⚠ " + e.message; }
+  refreshStatus();
+};
 $("#extClose").onclick = () => $("#extHelp").classList.add("hidden");
 $("#btnLogin").onclick = async () => {
-  if (!extInstalled()) return showExtHelp();
+  if (!extInstalled()) return showExtHelp();   // propose aussi la connexion manuelle
   try {
     const {authorize_url, state} = await post("/api/lidl/start");
     window.postMessage({source: "lidl-portal", type: "start", url: authorize_url, state}, location.origin);

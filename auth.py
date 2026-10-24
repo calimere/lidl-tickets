@@ -134,9 +134,27 @@ def start_authorization(user_id: int, country: str = config.COUNTRY,
     return f"{ACCOUNTS_URL}/connect/authorize?{urlencode(params)}", state
 
 
-def complete_authorization(state: str, code: str) -> int:
-    """Échange le code reçu par l'extension contre un jeton. Retourne l'user_id."""
-    req = db.pop_auth_request(_hash_state(state), time.time())
+def parse_pasted_callback(text: str) -> tuple[str, str | None]:
+    """Extrait (code, state) d'un lien `com.lidlplus.app://callback?code=…&state=…`
+    collé à la main (ou de sa seule partie `?code=…`). Le state peut manquer."""
+    text = (text or "").strip()
+    query = (text.split("?", 1)[1] if "?" in text else text).split("#")[0]
+    params = parse_qs(query)
+    if "error" in params:
+        raise AuthError(f"Lidl a refusé la connexion ({params['error'][0]}).")
+    code = (params.get("code") or [""])[0]
+    if not code:
+        raise AuthError("Lien invalide : il doit contenir « code= ». Copiez l'adresse "
+                        "complète commençant par com.lidlplus.app://callback")
+    return code, (params.get("state") or [None])[0]
+
+
+def complete_authorization(state: str | None, code: str, user_id: int | None = None) -> int:
+    """Échange le code reçu contre un jeton. Retourne l'user_id.
+
+    Extension : `state` seul identifie la demande (et donc l'utilisateur).
+    Saisie manuelle : `user_id` est celui de la session connectée, `state` est optionnel."""
+    req = db.pop_auth_request(_hash_state(state) if state else None, time.time(), user_id)
     if req is None:
         raise AuthError("Demande de connexion inconnue ou expirée : recommencez.")
     try:

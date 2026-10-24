@@ -213,13 +213,29 @@ def save_auth_request(state_hash: str, user_id: int, verifier: str, expires_at: 
                     "VALUES (?,?,?,?)", (state_hash, user_id, verifier, expires_at))
 
 
-def pop_auth_request(state_hash: str, now: float) -> dict | None:
-    """Lit puis supprime la demande (usage unique), si elle n'a pas expiré."""
+def pop_auth_request(state_hash: str | None, now: float,
+                     user_id: int | None = None) -> dict | None:
+    """Lit puis supprime la demande (usage unique), si elle n'a pas expiré.
+
+    Sélection par `state_hash`, et/ou par utilisateur (il n'a qu'une demande en cours).
+    Avec `user_id`, la demande d'un autre utilisateur n'est ni lue ni supprimée."""
+    where, params = [], []
+    if state_hash is not None:
+        where.append("state_hash = ?")
+        params.append(state_hash)
+    if user_id is not None:
+        where.append("user_id = ?")
+        params.append(user_id)
+    if not where:
+        return None
+    clause = " AND ".join(where)
     with connect() as con:
-        r = con.execute("SELECT user_id, verifier, expires_at FROM lidl_auth_requests "
-                        "WHERE state_hash = ?", (state_hash,)).fetchone()
-        con.execute("DELETE FROM lidl_auth_requests WHERE state_hash = ?", (state_hash,))
-        return dict(r) if r and r["expires_at"] > now else None
+        r = con.execute("SELECT state_hash, user_id, verifier, expires_at "
+                        f"FROM lidl_auth_requests WHERE {clause}", params).fetchone()
+        if r is None:
+            return None
+        con.execute("DELETE FROM lidl_auth_requests WHERE state_hash = ?", (r["state_hash"],))
+        return dict(r) if r["expires_at"] > now else None
 
 
 def purge_demo_users(domain: str, max_age_hours: int) -> int:

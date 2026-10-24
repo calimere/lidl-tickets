@@ -3,23 +3,34 @@
   "name": "Suivi tickets Lidl – connexion",
   "version": "0.1.0",
   "description": "Relie votre compte Lidl Plus au portail de suivi des tickets. Ne lit ni votre mot de passe ni vos pages : elle ne capte que le code de connexion renvoyé par Lidl.",
-  "icons": { "16": "icons/16.png", "48": "icons/48.png", "128": "icons/128.png" },
-  "permissions": ["webRequest", "storage"],
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "permissions": [
+    "webRequest",
+    "storage"
+  ],
   "host_permissions": [
     "https://accounts.lidl.com/*",
     "https://lidl-tickets.csk-prod.fr/*",
-    "http://localhost:3006/*",
-    "http://127.0.0.1:3006/*"
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
-  "background": { "service_worker": "background.js" },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
       "matches": [
         "https://lidl-tickets.csk-prod.fr/*",
-        "http://localhost:3006/*",
-        "http://127.0.0.1:3006/*"
+        "http://localhost/*",
+        "http://127.0.0.1/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_start"
     }
   ]

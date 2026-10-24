@@ -8,15 +8,19 @@
 // sur l'URL Lidl ne déclenche rien (sinon son compte Lidl serait lié à un autre
 // compte du portail).
 
-importScripts("lib.js");
+// Chrome : service worker (importScripts) ; Firefox : lib.js est chargé avant,
+// via "background.scripts" du manifest.
+if (typeof importScripts === "function") importScripts("lib.js");
+
+const api = globalThis.browser ?? globalThis.chrome;
 
 const KEY = "pending"; // { [tabId]: { state, origin, portalTabId } } dans storage.session
 
-const getPending = async () => (await chrome.storage.session.get(KEY))[KEY] ?? {};
-const setPending = (pending) => chrome.storage.session.set({ [KEY]: pending });
+const getPending = async () => (await api.storage.session.get(KEY))[KEY] ?? {};
+const setPending = (pending) => api.storage.session.set({ [KEY]: pending });
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || msg?.type !== "start" || !sender.tab) return;
+api.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== api.runtime.id || msg?.type !== "start" || !sender.tab) return;
   start(msg, sender).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e) }));
   return true; // réponse asynchrone
 });
@@ -25,7 +29,7 @@ async function start(msg, sender) {
   if (!isValidAuthorizeUrl(msg.url, msg.state)) {
     return { ok: false, error: "URL de connexion Lidl invalide." };
   }
-  const tab = await chrome.tabs.create({ url: msg.url, openerTabId: sender.tab.id });
+  const tab = await api.tabs.create({ url: msg.url, openerTabId: sender.tab.id });
   const pending = await getPending();
   pending[tab.id] = {
     state: msg.state,
@@ -39,7 +43,7 @@ async function start(msg, sender) {
 // La redirection vers le schéma d'app mobile peut être vue de deux façons selon le
 // navigateur : en-tête Location de la réponse, ou événement de redirection.
 const FILTER = { urls: ["https://accounts.lidl.com/*"] };
-chrome.webRequest.onHeadersReceived.addListener(
+api.webRequest.onHeadersReceived.addListener(
   (d) => {
     const location = d.responseHeaders?.find((h) => h.name.toLowerCase() === "location")?.value;
     if (location) handleUrl(d.tabId, location);
@@ -47,7 +51,7 @@ chrome.webRequest.onHeadersReceived.addListener(
   FILTER,
   ["responseHeaders"]
 );
-chrome.webRequest.onBeforeRedirect.addListener((d) => handleUrl(d.tabId, d.redirectUrl), FILTER);
+api.webRequest.onBeforeRedirect.addListener((d) => handleUrl(d.tabId, d.redirectUrl), FILTER);
 
 async function handleUrl(tabId, url) {
   const callback = parseCallback(url);
@@ -73,13 +77,13 @@ async function handleUrl(tabId, url) {
     result = { ok: false, error: `Portail injoignable : ${e}` };
   }
 
-  chrome.tabs.remove(tabId).catch(() => {});
-  chrome.tabs.update(entry.portalTabId, { active: true }).catch(() => {});
-  chrome.tabs.sendMessage(entry.portalTabId, { type: "result", ...result }).catch(() => {});
+  api.tabs.remove(tabId).catch(() => {});
+  api.tabs.update(entry.portalTabId, { active: true }).catch(() => {});
+  api.tabs.sendMessage(entry.portalTabId, { type: "result", ...result }).catch(() => {});
 }
 
 // Onglet fermé avant la fin : on oublie la demande.
-chrome.tabs.onRemoved.addListener(async (tabId) => {
+api.tabs.onRemoved.addListener(async (tabId) => {
   const pending = await getPending();
   if (tabId in pending) {
     delete pending[tabId];

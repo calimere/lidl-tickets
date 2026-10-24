@@ -62,7 +62,7 @@ def test_invite_code(env, monkeypatch):
     from fastapi.testclient import TestClient
     monkeypatch.setattr(env["config"], "REGISTRATION_CODE", "sesame")
     with TestClient(env["app"].app) as c:
-        assert c.get("/api/config").json() == {"invite_required": True}
+        assert c.get("/api/config").json()["invite_required"] is True
         assert register(c).status_code == 403
         assert register(c, invite_code="faux").status_code == 403
         assert register(c, invite_code="sesame").status_code == 200

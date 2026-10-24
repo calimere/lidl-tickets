@@ -23,7 +23,7 @@ import db
 import demo
 from accounts import AccountError
 from auth import (AUTH_REQUEST_TTL, AuthError, TokenStore, complete_authorization,
-                  start_authorization)
+                  parse_pasted_callback, start_authorization)
 from lidl_client import LidlClient
 
 app = FastAPI(title="Suivi tickets Lidl")
@@ -167,7 +167,8 @@ def privacy():
 @app.get("/api/config")
 def public_config():
     """Informations affichées sur l'écran de connexion (non authentifié)."""
-    return {"invite_required": bool(config.REGISTRATION_CODE)}
+    return {"invite_required": bool(config.REGISTRATION_CODE),
+            "firefox_xpi": (config.BASE_DIR / "extension" / "dist" / "lidl-tickets.xpi").is_file()}
 
 
 # --------------------------------------------------------------------------- routes
@@ -215,17 +216,54 @@ def lidl_callback(body: LidlCallback):
     return {"ok": True}
 
 
-@app.get("/extension.zip")
-def extension_zip():
-    """L'extension Chrome, à décompresser puis charger via chrome://extensions."""
-    buf = io.BytesIO()
+def build_extension_zip(browser: str) -> bytes:
+    """Zip de l'extension pour `chrome` ou `firefox` (seul le manifest diffère)."""
     root = config.BASE_DIR / "extension"
+    manifest = root / ("manifest.firefox.json" if browser == "firefox" else "manifest.json")
+    skip = {"manifest.json", "manifest.firefox.json"}
+    buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.write(manifest, "lidl-tickets-extension/manifest.json")
         for f in sorted(root.rglob("*")):
-            if f.is_file() and not f.name.endswith(".test.js"):
+            if f.is_file() and f.name not in skip and not f.name.endswith(".test.js"):
                 z.write(f, f"lidl-tickets-extension/{f.relative_to(root).as_posix()}")
-    return RawResponse(buf.getvalue(), media_type="application/zip", headers={
-        "Content-Disposition": 'attachment; filename="lidl-tickets-extension.zip"'})
+    return buf.getvalue()
+
+
+class PastedLink(BaseModel):
+    url: str
+
+
+@app.post("/api/lidl/paste")
+def lidl_paste(body: PastedLink, user: dict = Depends(real_user)):
+    """Connexion manuelle (sans extension) : l'utilisateur colle le lien de redirection
+    `com.lidlplus.app://callback?code=…` copié depuis les outils de développement."""
+    try:
+        code, state = parse_pasted_callback(body.url)
+        complete_authorization(state, code, user_id=user["id"])
+    except AuthError as e:
+        raise HTTPException(400, str(e)) from None
+    state_of(user["id"])["login"] = {"status": "ok", "message": "Connecté."}
+    return {"ok": True}
+
+
+@app.get("/extension.zip")
+def extension_zip(browser: str = "chrome"):
+    """L'extension, à décompresser puis charger (chrome://extensions ou about:debugging)."""
+    if browser not in ("chrome", "firefox"):
+        raise HTTPException(400, "Navigateur inconnu.")
+    return RawResponse(build_extension_zip(browser), media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="lidl-tickets-extension-{browser}.zip"'})
+
+
+@app.get("/extension.xpi")
+def extension_xpi():
+    """Extension Firefox signée par Mozilla (AMO, mode « non répertorié »), si fournie."""
+    xpi = config.BASE_DIR / "extension" / "dist" / "lidl-tickets.xpi"
+    if not xpi.is_file():
+        raise HTTPException(404, "Aucune extension Firefox signée n'est installée sur ce serveur.")
+    return FileResponse(xpi, media_type="application/x-xpinstall",
+                        filename="lidl-tickets.xpi")
 
 
 @app.post("/api/lidl/logout")

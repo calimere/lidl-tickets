@@ -135,3 +135,81 @@ def test_callback_network_error_is_not_a_500(client, monkeypatch):
     monkeypatch.setattr("auth.requests.post", boom)
     r = client.post("/api/lidl/callback", json={"code": "c", "state": body["state"]})
     assert r.status_code == 400 and "injoignable" in r.json()["detail"]
+
+
+# --------------------------------------------------------------------------- saisie manuelle
+def ok_exchange(monkeypatch):
+    monkeypatch.setattr("auth.requests.post", lambda *a, **k: FakeResponse(
+        200, {"access_token": "AT", "refresh_token": "RT"}))
+
+
+def test_paste_requires_login(client):
+    assert client.post("/api/lidl/paste", json={"url": "x"}).status_code == 401
+
+
+def test_paste_full_link_links_the_account(client, monkeypatch):
+    register(client)
+    state = start(client)["state"]
+    ok_exchange(monkeypatch)
+    link = f"com.lidlplus.app://callback?code=CODE9&scope=openid&state={state}"
+    assert client.post("/api/lidl/paste", json={"url": f"  {link}  "}).status_code == 200
+    st = client.get("/api/status").json()
+    assert st["logged_in"] and st["login"]["status"] == "ok"
+
+
+def test_paste_accepts_a_link_without_state(client, monkeypatch):
+    register(client)
+    start(client)
+    ok_exchange(monkeypatch)
+    assert client.post("/api/lidl/paste", json={"url": "?code=ONLYCODE"}).status_code == 200
+    assert client.get("/api/status").json()["logged_in"]
+
+
+def test_paste_cannot_use_another_users_request(client, env, monkeypatch):
+    db = env["db"]
+    ok_exchange(monkeypatch)
+    register(client, "a@example.com")
+    state_a = start(client)["state"]
+    client.post("/api/auth/logout")
+    register(client, "b@example.com")
+    start(client)
+    # B colle le lien (avec le state de A) : refusé, et la demande de A reste intacte
+    r = client.post("/api/lidl/paste",
+                    json={"url": f"com.lidlplus.app://callback?code=C&state={state_a}"})
+    assert r.status_code == 400
+    assert db.load_lidl_token(db.user_by_email("b@example.com")["id"]) is None
+    client.post("/api/auth/logout")
+    client.post("/api/auth/login", json={"email": "a@example.com", "password": PWD})
+    assert client.post("/api/lidl/paste", json={
+        "url": f"com.lidlplus.app://callback?code=C&state={state_a}"}).status_code == 200
+
+
+def test_paste_rejects_garbage_denied_and_missing_request(client, monkeypatch):
+    register(client)
+    ok_exchange(monkeypatch)
+    start(client)
+    for bad in ("", "n'importe quoi", "com.lidlplus.app://callback?error=access_denied"):
+        assert client.post("/api/lidl/paste", json={"url": bad}).status_code == 400, bad
+    # une demande en cours existe encore : un bon lien passe
+    assert client.post("/api/lidl/paste", json={"url": "?code=C"}).status_code == 200
+    # plus de demande en cours (consommée) : refusé
+    assert client.post("/api/lidl/paste", json={"url": "?code=C"}).status_code == 400
+
+
+def test_paste_forbidden_in_demo(client):
+    client.post("/api/auth/demo")
+    assert client.post("/api/lidl/paste", json={"url": "?code=C"}).status_code == 403
+
+
+def test_extension_zip_per_browser(client):
+    for browser, key in (("chrome", "service_worker"), ("firefox", "scripts")):
+        r = client.get(f"/extension.zip?browser={browser}")
+        assert r.status_code == 200
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        import json
+        manifest = json.loads(z.read("lidl-tickets-extension/manifest.json"))
+        assert key in manifest["background"]
+        assert "lidl-tickets-extension/manifest.firefox.json" not in z.namelist()
+        assert ("browser_specific_settings" in manifest) == (browser == "firefox")
+    assert client.get("/extension.zip?browser=ie").status_code == 400
+    assert client.get("/extension.xpi").status_code == 404

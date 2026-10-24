@@ -39,11 +39,13 @@ connexion ouvre un compte jetable (≈190 tickets fictifs, supprimé après
 relier Lidl Plus. En ligne de commande : `python manage.py demo EMAIL` remplit un compte
 existant de données fictives.
 
-## Extension Chrome
+## Se connecter à Lidl Plus : extension ou saisie manuelle
 
 Le portail ne peut pas récupérer lui-même la redirection finale de Lidl
-(`com.lidlplus.app://callback?code=…`, un schéma d'application mobile). L'extension
-(`extension/`, Manifest V3) s'en charge :
+(`com.lidlplus.app://callback?code=…`, un schéma d'application mobile). Deux façons de la
+lui fournir :
+
+### Option 1 – extension navigateur (`extension/`, Manifest V3)
 
 1. Le portail prépare une demande PKCE avec un `state` à usage unique
    (`POST /api/lidl/start`) et la transmet à l'extension via la page.
@@ -53,18 +55,42 @@ Le portail ne peut pas récupérer lui-même la redirection finale de Lidl
    `{code, state}` à `POST /api/lidl/callback`. Le portail échange le code contre un
    jeton avec le `verifier` gardé côté serveur.
 
-Installation (testeurs) : le portail propose le zip sur `/extension.zip`, à
-décompresser puis à charger via `chrome://extensions` (mode développeur →
-« Charger l'extension non empaquetée »).
+| Navigateur | Installation |
+|---|---|
+| Chrome, Edge, Brave | `/extension.zip` à décompresser, puis `chrome://extensions` → mode développeur → « Charger l'extension non empaquetée » |
+| Firefox | idéalement `/extension.xpi` (signé, voir ci-dessous) ; sinon `/extension.zip?browser=firefox`, puis `about:debugging#/runtime/this-firefox` → « Charger un module complémentaire temporaire » (à refaire à chaque redémarrage) |
 
-Origines du portail : `extension/manifest.json` (`host_permissions` et
-`content_scripts.matches`) liste `lidl-tickets.csk-prod.fr` et `localhost:3006` ;
-adaptez-les si le portail change de domaine.
+Le zip Firefox ne diffère que par le manifest (`manifest.firefox.json` : `background.scripts`
+au lieu de `service_worker`, identifiant `gecko`, `data_collection_permissions`). Le code
+est le même (`api = browser ?? chrome`). Les motifs d'hôte du manifest n'ont **pas de port**
+(`http://localhost/*`) : Firefox ne fait pas correspondre un motif avec port.
 
-Sécurité : l'extension n'agit que pour une connexion demandée par le portail (message
-du content script) et uniquement dans l'onglet qu'elle a ouvert, avec le `state`
-annoncé. Sans cela, un site tiers pourrait faire lier le compte Lidl d'une victime au
-compte portail de l'attaquant. Tests : `node --test extension/lib.test.js`.
+**Firefox signé (pour les testeurs)** : Firefox n'installe durablement que les extensions
+signées par Mozilla. Créez un compte sur addons.mozilla.org, générez des clés API, puis :
+
+```bash
+npx web-ext sign --channel=unlisted --source-dir=<dossier avec manifest.firefox.json copié en manifest.json> \
+  --api-key=… --api-secret=…
+```
+
+Placez le `.xpi` obtenu dans `extension/dist/lidl-tickets.xpi` : le portail le sert sur
+`/extension.xpi` et l'interface propose alors « Installer pour Firefox ».
+
+### Option 2 – saisie manuelle (tout navigateur, ordinateur)
+
+Sans extension (Safari, navigateur non pris en charge) : le panneau « Se connecter à Lidl
+Plus » ouvre la page Lidl, vous copiez depuis les outils de développement (onglet Réseau) le
+lien `com.lidlplus.app://callback?code=…` de la dernière redirection et le collez dans le
+portail (`POST /api/lidl/paste`). Le lien est à usage unique, expire après 10 minutes et ne
+peut servir qu'au compte connecté qui l'a demandé. Pas de Safari en extension : il faudrait
+un Mac, Xcode et un compte Apple Developer payant, et `webRequest` y est limité.
+
+### Sécurité
+
+L'extension n'agit que pour une connexion demandée par le portail (message du content
+script) et uniquement dans l'onglet qu'elle a ouvert, avec le `state` annoncé. Sans cela, un
+site tiers pourrait faire lier le compte Lidl d'une victime au compte portail de
+l'attaquant. Tests : `node --test extension/lib.test.js`.
 
 ## Comptes et migration
 
