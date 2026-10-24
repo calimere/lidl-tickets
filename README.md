@@ -39,6 +39,43 @@ connexion ouvre un compte jetable (≈190 tickets fictifs, supprimé après
 relier Lidl Plus. En ligne de commande : `python manage.py demo EMAIL` remplit un compte
 existant de données fictives.
 
+## Déploiement (Docker + Nginx Proxy Manager)
+
+Le conteneur ne publie **aucun port** sur l'hôte. Il vit sur un réseau Docker dédié,
+`lidl-tickets-net`, et Nginx Proxy Manager (NPM) en est la passerelle : HTTPS, certificat
+Let's Encrypt et nom de domaine.
+
+```bash
+git clone https://github.com/calimere/lidl-tickets.git && cd lidl-tickets
+cp .env.example .env        # renseigner LIDL_SECRET_KEY (obligatoire), LIDL_PUBLISHER, LIDL_CONTACT_EMAIL…
+docker compose up -d --build
+```
+
+1. **Rattacher NPM au réseau** (une fois, immédiat) :
+   ```bash
+   docker network connect lidl-tickets-net <nom-du-conteneur-npm>
+   ```
+   Pour que ça survive à une recréation du conteneur NPM, ajoutez le réseau à son
+   `docker-compose.yml` :
+   ```yaml
+   services:
+     app:                       # le service NPM existant
+       networks: [default, lidl-tickets-net]
+   networks:
+     lidl-tickets-net:
+       external: true
+   ```
+2. **Proxy Host** dans NPM : domaine `lidl-tickets.csk-prod.fr`, schéma `http`, hôte
+   `lidl-tickets`, port `3006`. Onglet SSL : nouveau certificat Let's Encrypt, « Force SSL »
+   et « HTTP/2 ». Pas besoin de Websockets.
+3. Vérifier : `docker port lidl-tickets` ne doit rien afficher.
+
+Le cookie de session est réservé à HTTPS (`LIDL_COOKIE_SECURE=1` par défaut dans le compose).
+L'IP réelle du client (anti brute-force) vient de l'en-tête `X-Forwarded-For` posé par NPM ;
+uvicorn lui fait confiance parce que seul NPM peut joindre le conteneur. **Sauvegardez
+`LIDL_SECRET_KEY`** et le volume `lidl-data` (base SQLite) : sans la clé, les jetons Lidl
+stockés sont illisibles.
+
 ## Se connecter à Lidl Plus : extension ou saisie manuelle
 
 Le portail ne peut pas récupérer lui-même la redirection finale de Lidl

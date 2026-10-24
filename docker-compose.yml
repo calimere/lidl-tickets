@@ -1,12 +1,16 @@
-# Production :  cp .env.example .env  (remplir)  puis  docker compose up -d --build
+# Production derrière Nginx Proxy Manager (NPM) :
+#   cp .env.example .env   (remplir)
+#   docker compose up -d --build
+#   puis rattacher NPM au réseau « lidl-tickets-net » (voir README) et créer le Proxy Host
+#   lidl-tickets.csk-prod.fr -> http://lidl-tickets:3006
 #
-# Deux façons d'exposer le portail :
-#  - votre reverse proxy existant (nginx, Traefik…) vers 127.0.0.1:3006 ;
-#  - ou Caddy inclus (HTTPS automatique) :  docker compose --profile caddy up -d --build
+# Aucun port n'est publié sur l'hôte : le portail n'est joignable que depuis le réseau
+# Docker dédié ci-dessous, où NPM sert de passerelle (HTTPS, certificat, domaine).
 
 services:
   app:
     build: .
+    container_name: lidl-tickets
     restart: unless-stopped
     environment:
       LIDL_SECRET_KEY: ${LIDL_SECRET_KEY:?Définissez LIDL_SECRET_KEY dans .env}
@@ -20,26 +24,14 @@ services:
       LIDL_USE_SYSTEM_CA: ${LIDL_USE_SYSTEM_CA:-0}
     volumes:
       - lidl-data:/data
-    # Visible uniquement depuis l'hôte : le reverse proxy fait l'HTTPS
-    ports:
-      - "127.0.0.1:${LIDL_PORT:-3006}:3006"
+    networks:
+      - lidl-tickets-net
+    # volontairement pas de « ports: »
 
-  caddy:
-    profiles: ["caddy"]
-    image: caddy:2-alpine
-    restart: unless-stopped
-    depends_on: [app]
-    environment:
-      DOMAIN: ${DOMAIN:-localhost}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
+networks:
+  # Réseau dédié au portail. Nom fixe pour pouvoir y rattacher NPM.
+  lidl-tickets-net:
+    name: lidl-tickets-net
 
 volumes:
   lidl-data:
-  caddy-data:
-  caddy-config:
