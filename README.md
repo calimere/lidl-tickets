@@ -45,11 +45,21 @@ Le conteneur ne publie **aucun port** sur l'hôte. Il vit sur un réseau Docker 
 `lidl-tickets-net`, et Nginx Proxy Manager (NPM) en est la passerelle : HTTPS, certificat
 Let's Encrypt et nom de domaine.
 
+L'image est construite et publiée par GitHub Actions (`.github/workflows/docker.yml` : tests,
+puis `ghcr.io/calimere/lidl-tickets:latest` à chaque push sur `main`). Le serveur ne construit
+rien, il tire l'image : seuls `docker-compose.yml` et `.env` sont nécessaires.
+
 ```bash
-git clone https://github.com/calimere/lidl-tickets.git && cd lidl-tickets
+mkdir lidl-tickets && cd lidl-tickets
+# copier docker-compose.yml et .env.example du dépôt, puis :
 cp .env.example .env        # renseigner LIDL_SECRET_KEY (obligatoire), LIDL_PUBLISHER, LIDL_CONTACT_EMAIL…
-docker compose up -d --build
+docker compose pull && docker compose up -d
 ```
+
+Si le paquet ghcr.io est privé, connectez d'abord le serveur (une fois) avec un jeton GitHub
+`read:packages` : `echo $TOKEN | docker login ghcr.io -u calimere --password-stdin`.
+Mise à jour : `docker compose pull && docker compose up -d`. Version précise :
+`LIDL_TAG=sha-abc1234` dans `.env`. Le conteneur est limité à 160 Mo (`LIDL_MEM_LIMIT`).
 
 1. **Rattacher NPM au réseau** (une fois, immédiat) :
    ```bash

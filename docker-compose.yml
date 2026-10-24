@@ -1,6 +1,8 @@
 # Production derrière Nginx Proxy Manager (NPM) :
 #   cp .env.example .env   (remplir)
-#   docker compose up -d --build
+#   docker compose pull && docker compose up -d
+# L'image est construite par GitHub Actions (.github/workflows/docker.yml) et tirée depuis
+# ghcr.io : rien n'est construit sur le serveur.
 #   puis rattacher NPM au réseau « lidl-tickets-net » (voir README) et créer le Proxy Host
 #   lidl-tickets.csk-prod.fr -> http://lidl-tickets:3006
 #
@@ -9,8 +11,12 @@
 
 services:
   app:
-    build: .
+    image: ghcr.io/calimere/lidl-tickets:${LIDL_TAG:-latest}
     container_name: lidl-tickets
+    # Serveur partagé et sans swap : on borne la mémoire pour qu'un souci ici ne
+    # déclenche jamais l'OOM killer sur les autres services.
+    mem_limit: ${LIDL_MEM_LIMIT:-160m}
+    memswap_limit: ${LIDL_MEM_LIMIT:-160m}
     restart: unless-stopped
     environment:
       LIDL_SECRET_KEY: ${LIDL_SECRET_KEY:?Définissez LIDL_SECRET_KEY dans .env}

@@ -6,6 +6,9 @@ ENV PYTHONUNBUFFERED=1 \
     LIDL_DATA_DIR=/data \
     LIDL_HOST=0.0.0.0
 
+# Relie l'image au dépôt GitHub (visibilité et droits du paquet ghcr.io)
+LABEL org.opencontainers.image.source="https://github.com/calimere/lidl-tickets"
+
 WORKDIR /app
 
 COPY requirements.txt .
