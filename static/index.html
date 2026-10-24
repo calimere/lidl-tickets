@@ -61,6 +61,16 @@
                       text-decoration: underline; }
   #authErr { color: var(--up); min-height: 1.3em; }
   header #who { font-size: 13px; opacity: .9; }
+  #auth .sep { text-align: center; color: var(--muted); margin: 14px 0 10px; font-size: 13px; }
+  #auth button.demo { width: 100%; background: var(--card); border: 1px solid var(--brand);
+                      color: var(--brand); }
+  footer { max-width: 1200px; margin: 0 auto; padding: 8px 20px 30px; font-size: 13px;
+           color: var(--muted); display: flex; gap: 16px; flex-wrap: wrap; }
+  footer a, footer button.link { color: var(--muted); background: none; padding: 0;
+                                 font-weight: 400; text-decoration: underline; }
+  #authLinks { text-align: center; margin-top: 12px; font-size: 13px; }
+  #authLinks a { color: var(--muted); }
+  #demoBanner { background: #fff6cc; border-bottom: 1px solid #e6d27a; padding: 8px 24px; font-size: 13px; }
 </style>
 </head>
 <body>
@@ -76,10 +86,16 @@
       <button id="aSubmit" type="submit">Se connecter</button>
       <button id="aToggle" type="button" class="link">Pas encore de compte ? S'inscrire</button>
     </form>
+    <div class="sep">ou</div>
+    <button id="aDemo" type="button" class="demo">Essayer avec des données fictives</button>
   </div>
+  <div id="authLinks"><a href="/confidentialite">Confidentialité et données personnelles</a></div>
 </div>
 
 <div id="app" class="hidden">
+<div id="demoBanner" class="hidden">Mode démo : ces tickets sont fictifs et le compte est supprimé
+  automatiquement. <b>Créez un compte</b> pour relier votre vrai compte Lidl Plus
+  (<a href="#" id="demoQuit">quitter la démo</a>).</div>
 <header>
   <h1><span>Lidl</span>Suivi de mes tickets</h1>
   <div id="status">…</div>
@@ -175,6 +191,10 @@
     <canvas id="spendChart" height="110"></canvas>
   </section>
 </main>
+<footer>
+  <a href="/confidentialite">Confidentialité</a>
+  <a href="/api/account/export" id="btnExport">Exporter mes données</a>
+</footer>
 </div>
 
 <script>
@@ -223,6 +243,16 @@ $("#authForm").onsubmit = async e => {
     startApp();
   } catch (err) { $("#authErr").textContent = err.message; }
 };
+$("#aDemo").onclick = async () => {
+  try { await post("/api/auth/demo"); startApp(); }
+  catch (err) { $("#authErr").textContent = err.message; }
+};
+$("#demoQuit").onclick = async e => {
+  e.preventDefault();
+  await api("/api/account", {method: "DELETE"});
+  showAuth();
+  setRegistering(true);
+};
 $("#btnPortalLogout").onclick = async () => { await post("/api/auth/logout"); showAuth(); };
 $("#btnDelete").onclick = async () => {
   if (!confirm("Supprimer définitivement votre compte, vos tickets et le lien avec Lidl Plus ?")) return;
@@ -252,9 +282,11 @@ async function refreshStatus() {
   $("#kTotal").textContent = eur(st.total_spent);
   $("#kItems").textContent = st.items;
 
-  $("#who").textContent = s.email;
-  $("#btnLogin").classList.toggle("hidden", s.logged_in);
+  $("#who").textContent = s.demo ? "Démo" : s.email;
+  $("#demoBanner").classList.toggle("hidden", !s.demo);
+  $("#btnLogin").classList.toggle("hidden", s.logged_in || s.demo);
   $("#btnLogout").classList.toggle("hidden", !s.logged_in);
+  $("#btnSync").classList.toggle("hidden", s.demo);
   $("#btnSync").disabled = !s.logged_in || s.sync.running;
   $("#btnLogin").disabled = s.login.status === "running";
 

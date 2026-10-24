@@ -222,6 +222,35 @@ def pop_auth_request(state_hash: str, now: float) -> dict | None:
         return dict(r) if r and r["expires_at"] > now else None
 
 
+def purge_demo_users(domain: str, max_age_hours: int) -> int:
+    """Supprime les comptes de démonstration plus vieux que la durée donnée."""
+    with connect() as con:
+        ids = [r[0] for r in con.execute(
+            "SELECT id FROM users WHERE email LIKE ? AND created_at < datetime('now', ?)",
+            (f"%@{domain}", f"-{int(max_age_hours)} hours"))]
+    for user_id in ids:
+        delete_user(user_id)
+    return len(ids)
+
+
+def export_user(user_id: int) -> dict:
+    """Toutes les données d'un utilisateur (droit d'accès / portabilité). Le jeton Lidl,
+    qui est un secret, n'en fait pas partie."""
+    with connect() as con:
+        user = con.execute("SELECT email, created_at FROM users WHERE id = ?",
+                           (user_id,)).fetchone()
+        tickets = [{"id": r["id"], "date": r["date"], "store": r["store"], "total": r["total"],
+                    "summary": json.loads(r["raw_summary"] or "null"),
+                    "detail": json.loads(r["raw_detail"] or "null")}
+                   for r in con.execute(
+                       "SELECT * FROM tickets WHERE user_id = ? ORDER BY date", (user_id,))]
+        lidl = con.execute("SELECT updated_at FROM lidl_tokens WHERE user_id = ?",
+                           (user_id,)).fetchone()
+    return {"account": dict(user) if user else None,
+            "lidl_linked_since": lidl[0] if lidl else None,
+            "tickets": tickets}
+
+
 def adopt_legacy(user_id: int) -> tuple[int, int]:
     """Rattache à ce compte les tickets importés avant l'arrivée des comptes."""
     # Connexion à part : la clé parente (user_id, id) change en même temps que celle
@@ -316,15 +345,25 @@ def _insert_items(con, user_id: int, ticket_id: str, date: str, detail: dict) ->
     return len(items)
 
 
-def save_ticket(user_id: int, summary: dict, detail: dict) -> int:
+def _save_ticket(con, user_id: int, summary: dict, detail: dict) -> int:
     meta = ticket_meta(summary, detail)
+    con.execute(
+        """INSERT OR REPLACE INTO tickets (user_id, id, date, store, total, raw_summary, raw_detail)
+           VALUES (?,?,?,?,?,?,?)""",
+        (user_id, meta["id"], meta["date"], meta["store"], meta["total"],
+         json.dumps(summary, ensure_ascii=False), json.dumps(detail, ensure_ascii=False)))
+    return _insert_items(con, user_id, meta["id"], meta["date"], detail)
+
+
+def save_ticket(user_id: int, summary: dict, detail: dict) -> int:
     with connect() as con:
-        con.execute(
-            """INSERT OR REPLACE INTO tickets (user_id, id, date, store, total, raw_summary, raw_detail)
-               VALUES (?,?,?,?,?,?,?)""",
-            (user_id, meta["id"], meta["date"], meta["store"], meta["total"],
-             json.dumps(summary, ensure_ascii=False), json.dumps(detail, ensure_ascii=False)))
-        return _insert_items(con, user_id, meta["id"], meta["date"], detail)
+        return _save_ticket(con, user_id, summary, detail)
+
+
+def save_tickets(user_id: int, tickets: list[tuple[dict, dict]]) -> int:
+    """Plusieurs tickets (résumé, détail) en une seule transaction."""
+    with connect() as con:
+        return sum(_save_ticket(con, user_id, s, d) for s, d in tickets)
 
 
 def reparse_all() -> tuple[int, int]:
@@ -388,7 +427,9 @@ def products(user_id: int, query: str = "", group: str = "code",
     for a in agg.values():
         prices = [p for _, p in a["prices"] if p is not None]
         first, last = a["prices"][0], a["prices"][-1]
-        display_name = labels.get(a["key"]) or fixes.get(a["key"]) or a["name"]
+        # une correction devinée ne sert que tant que le nom brut est encore abîmé
+        guessed = fixes.get(a["key"]) if "�" in a["name"] else None
+        display_name = labels.get(a["key"]) or guessed or a["name"]
         out.append({
             "key": a["key"], "name": display_name, "is_weight": a["is_weight"],
             "purchases": a["n"],
@@ -402,7 +443,7 @@ def products(user_id: int, query: str = "", group: str = "code",
 
 
 def product_history(user_id: int, key: str, group: str = "code") -> list[dict]:
-    sql = f"""SELECT i.date, COALESCE(pl.label, nf.fixed_name, i.name) AS name, i.code,
+    sql = f"""SELECT i.date, COALESCE(pl.label, CASE WHEN instr(i.name, char(65533)) > 0 THEN nf.fixed_name END, i.name) AS name, i.code,
                      i.unit_price, i.quantity, i.is_weight, i.amount, i.discount,
                      i.ticket_id, t.store
               FROM items i JOIN tickets t ON t.user_id = i.user_id AND t.id = i.ticket_id
@@ -435,7 +476,7 @@ def ticket_detail(user_id: int, ticket_id: str) -> dict | None:
         if ticket is None:
             return None
         items = [dict(r) for r in con.execute(
-            """SELECT i.code, COALESCE(pl.label, nf.fixed_name, i.name) AS name, i.unit_price,
+            """SELECT i.code, COALESCE(pl.label, CASE WHEN instr(i.name, char(65533)) > 0 THEN nf.fixed_name END, i.name) AS name, i.unit_price,
                       i.quantity, i.is_weight, i.amount, i.discount,
                       COALESCE(NULLIF(i.code, ''), i.name) AS _key
                FROM items i

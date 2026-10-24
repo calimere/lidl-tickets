@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confidentialité – Suivi de mes tickets Lidl</title>
+<style>
+  :root { --bg: #f4f6f9; --card: #fff; --ink: #1c2430; --muted: #6b7686; --line: #e3e7ee; --brand: #0050aa; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--ink); }
+  main { max-width: 760px; margin: 0 auto; padding: 24px 20px 60px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 24px 20px; }
+  h1 { font-size: 22px; margin: 8px 0 16px; }
+  h2 { font-size: 16px; margin: 24px 0 6px; color: var(--brand); }
+  a { color: var(--brand); }
+  ul { padding-left: 20px; } li { margin: 3px 0; }
+  .muted { color: var(--muted); font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <p><a href="/">← Retour</a></p>
+  <div class="card">
+    <h1>Confidentialité et données personnelles</h1>
+    <p class="muted">Ce service est un projet indépendant, <b>non affilié à Lidl</b>. Il
+      récupère, avec votre accord, vos tickets de caisse Lidl Plus pour suivre l'évolution
+      des prix des produits que vous achetez.</p>
+
+    <h2>Qui est responsable du traitement ?</h2>
+    <p>{{PUBLISHER}}<br>Contact pour toute question ou demande : {{CONTACT}}</p>
+
+    <h2>Quelles données sont traitées ?</h2>
+    <table>
+      <tr><th>Donnée</th><th>Pourquoi</th><th>Comment elle est protégée</th></tr>
+      <tr><td>Adresse e-mail</td><td>Identifier votre compte</td><td>Stockée en base</td></tr>
+      <tr><td>Mot de passe du portail</td><td>Vous connecter</td><td>Jamais conservé en clair : seule une empreinte (argon2) est stockée</td></tr>
+      <tr><td>Jeton de connexion Lidl Plus</td><td>Télécharger vos tickets quand vous le demandez</td><td>Chiffré en base. Le portail ne voit <b>jamais</b> votre mot de passe Lidl : vous le saisissez sur la page de Lidl, dans votre navigateur</td></tr>
+      <tr><td>Tickets de caisse (date, magasin, articles, prix, remises) et ticket brut renvoyé par Lidl</td><td>Afficher vos statistiques et courbes de prix</td><td>Accessibles uniquement depuis votre compte</td></tr>
+      <tr><td>Cookie de session</td><td>Rester connecté</td><td>Cookie technique <code>HttpOnly</code>, valable {{SESSION_DAYS}} jours</td></tr>
+    </table>
+    <p class="muted">Pour limiter les tentatives de piratage, le nombre d'essais de connexion
+      est compté par adresse IP et par e-mail, uniquement en mémoire : ces compteurs ne sont
+      pas enregistrés.</p>
+
+    <h2>Base légale et finalités</h2>
+    <p>Les données sont traitées pour vous fournir le service que vous avez demandé (création
+      de votre compte et import de vos tickets). Elles ne servent à rien d'autre : ni
+      publicité, ni revente, ni profilage, ni mesure d'audience.</p>
+
+    <h2>Combien de temps ?</h2>
+    <ul>
+      <li>Vos données sont conservées jusqu'à la suppression de votre compte.</li>
+      <li>« Déconnecter Lidl » supprime immédiatement le jeton Lidl.</li>
+      <li>« Supprimer mon compte » efface le compte, les tickets, le jeton et les sessions, sans délai.</li>
+      <li>Les comptes de démonstration (données fictives) sont supprimés après {{TTL_DEMO}} h.</li>
+    </ul>
+
+    <h2>Qui y a accès ?</h2>
+    <p>Personne d'autre que vous et l'éditeur, qui héberge la base sur son propre serveur.
+      Vos données ne sont transmises à aucun tiers. Seule exception technique : les
+      bibliothèques de graphiques sont chargées depuis le CDN jsDelivr, qui voit donc votre
+      adresse IP comme pour toute ressource web.</p>
+    <p>Le portail contacte Lidl uniquement pour échanger votre jeton et télécharger vos
+      tickets, à votre demande.</p>
+
+    <h2>L'extension Chrome</h2>
+    <p>Elle n'agit que lorsque vous cliquez sur « Se connecter à Lidl Plus », uniquement dans
+      l'onglet qu'elle ouvre alors. Elle ne lit ni vos pages, ni votre mot de passe, ni votre
+      historique : elle repère seulement le code de connexion renvoyé par Lidl en fin de
+      connexion et le transmet à ce portail. Son code est lisible dans le fichier téléchargé.</p>
+
+    <h2>Vos droits</h2>
+    <ul>
+      <li><b>Accès et portabilité</b> : bouton « Exporter mes données » (fichier JSON).</li>
+      <li><b>Effacement</b> : bouton « Supprimer mon compte ».</li>
+      <li><b>Rectification, limitation, opposition</b> : écrivez à {{CONTACT}}.</li>
+      <li>Vous pouvez aussi saisir la <a href="https://www.cnil.fr/fr/plaintes">CNIL</a> en cas de désaccord.</li>
+    </ul>
+
+    <h2>À savoir</h2>
+    <p>L'accès aux tickets passe par une interface de Lidl Plus non documentée officiellement :
+      Lidl peut la modifier ou la restreindre à tout moment, et son utilisation peut ne pas
+      être conforme à ses conditions d'utilisation. Utilisez ce service en connaissance de cause.
+      Ce projet est fourni sans garantie.</p>
+  </div>
+</main>
+</body>
+</html>

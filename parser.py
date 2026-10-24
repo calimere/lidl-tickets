@@ -59,6 +59,33 @@ def _json_items(lines: list[dict]) -> list[dict]:
     return items
 
 
+_SYMBOLS = "®°™©²³½ºª"   # symboles qui peuvent aussi être perdus dans les libellés
+
+
+def recover_accents(description: str, line_text: str) -> str:
+    """Répare les « � » de `data-art-description` grâce au texte visible de la ligne.
+
+    Lidl envoie l'attribut avec les lettres accentuées déjà perdues
+    (`Brioche tranch�e`), alors que le texte imprimé juste à côté est correct
+    (`Brioche tranch&eacute;e   2,09  1  2,09 A T`). On aligne la description sur le
+    début de la ligne : chaque « � » correspond au caractère qui est à la même place.
+    Si l'alignement n'est pas sûr (ligne différente, caractère qui n'est pas une
+    lettre), la description est rendue telle quelle."""
+    if "\ufffd" not in description:
+        return description
+    text = line_text.lstrip()
+    # Le texte imprim\u00e9 tronque les noms longs : on s'aligne alors sur la partie visible.
+    visible = re.split(r"\s{2,}", text, maxsplit=1)[0]
+    head = description[:len(visible)] if len(visible) < len(description) else description
+    pattern = "".join("(.)" if ch == "\ufffd" else re.escape(ch) for ch in head)
+    m = re.match(pattern, text)
+    if not m or not all(c.isalpha() or c in _SYMBOLS for c in m.groups()):
+        return description
+    letters = iter(m.groups())
+    return ("".join(next(letters) if ch == "\ufffd" else ch for ch in head)
+            + description[len(head):])
+
+
 def _html_items(html: str) -> list[dict]:
     """Analyse le reçu imprimé (format `<span class="article" data-art-id=...
     data-art-description=... data-art-quantity=... data-unit-price=...>`).
@@ -77,17 +104,21 @@ def _html_items(html: str) -> list[dict]:
         if "article" in classes:
             art_id = tag.attrs.get("data-art-id") or ""
             description = (tag.attrs.get("data-art-description") or "").strip()
-            if current is not None and current["code"] == art_id and current["name"] == description:
+            if current is not None and current["code"] == art_id and current["_raw_name"] == description:
                 # Produits au poids : ligne "montant" puis ligne "qté kg x prix/kg"
                 # répétant les mêmes attributs — c'est la suite du même article,
-                # pas un second achat.
+                # pas un second achat. Pour ces produits la ligne du nom peut venir
+                # après celle des kilos : on en profite pour réparer les accents.
+                if "�" in current["name"]:
+                    current["name"] = recover_accents(description, tag.get_text())
                 continue
             qty_raw = tag.attrs.get("data-art-quantity")
             qty = to_float(qty_raw) or 1.0
             unit = to_float(tag.attrs.get("data-unit-price") or tag.attrs.get("data-art-unit-price"))
             current = {
                 "code": str(art_id).strip(),
-                "name": description,
+                "name": recover_accents(description, tag.get_text()),
+                "_raw_name": description,   # pour reconnaître la 2e ligne d'un produit au poids
                 "unit_price": unit,
                 "quantity": qty,
                 "is_weight": 1 if any(c in (qty_raw or "") for c in ",.") else 0,
@@ -113,4 +144,5 @@ def parse_items(detail: dict) -> list[dict]:
         items = _html_items(detail["htmlPrintedReceipt"])
     else:
         items = []
-    return [i for i in items if i["name"] and i["unit_price"] is not None]
+    return [{k: v for k, v in i.items() if k != "_raw_name"}
+            for i in items if i["name"] and i["unit_price"] is not None]

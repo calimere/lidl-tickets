@@ -13,13 +13,14 @@ import zipfile
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response as RawResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import accounts
 import config
 import db
+import demo
 from accounts import AccountError
 from auth import (AUTH_REQUEST_TTL, AuthError, TokenStore, complete_authorization,
                   start_authorization)
@@ -116,9 +117,24 @@ def logout_portal(request: Request, response: Response):
     return {"ok": True}
 
 
+@app.post("/api/auth/demo")
+def start_demo(request: Request, response: Response):
+    """Ouvre un compte jetable avec des tickets fictifs (aucun compte Lidl requis)."""
+    ip = request.client.host if request.client else "?"
+    _start_session(response, accounts.create_demo_user(f"demo|{ip}"))
+    return {"ok": True}
+
+
 @app.get("/api/auth/me")
 def me(user: dict = Depends(current_user)):
-    return {"email": user["email"]}
+    return {"email": user["email"], "demo": demo.is_demo_email(user["email"])}
+
+
+def real_user(user: dict = Depends(current_user)) -> dict:
+    """Comme current_user, mais refuse les comptes de démonstration."""
+    if demo.is_demo_email(user["email"]):
+        raise HTTPException(403, "Indisponible en mode démo : créez un compte pour relier Lidl Plus.")
+    return user
 
 
 @app.delete("/api/account")
@@ -128,6 +144,24 @@ def delete_account(response: Response, user: dict = Depends(current_user)):
     states.pop(user["id"], None)
     response.delete_cookie(accounts.COOKIE_NAME, path="/")
     return {"ok": True}
+
+
+@app.get("/api/account/export")
+def export_account(user: dict = Depends(current_user)):
+    """Export JSON de toutes les données du compte (droit d'accès et portabilité)."""
+    return JSONResponse(db.export_user(user["id"]), headers={
+        "Content-Disposition": 'attachment; filename="mes-donnees-lidl-tickets.json"'})
+
+
+@app.get("/confidentialite", response_class=HTMLResponse)
+def privacy():
+    import html
+    page = (config.BASE_DIR / "static" / "privacy.html").read_text(encoding="utf-8")
+    for key, value in (("PUBLISHER", config.PUBLISHER), ("CONTACT", config.CONTACT_EMAIL),
+                       ("TTL_DEMO", str(config.DEMO_TTL_HOURS)),
+                       ("SESSION_DAYS", str(config.SESSION_DAYS))):
+        page = page.replace("{{%s}}" % key, html.escape(value) or "<em>(non renseigné)</em>")
+    return page
 
 
 @app.get("/api/config")
@@ -150,12 +184,13 @@ def status(user: dict = Depends(current_user)):
         state["login"] = {"status": "error",
                           "message": "Délai dépassé : relancez la connexion à Lidl Plus."}
     return {"logged_in": TokenStore(user["id"]).logged_in, "country": config.COUNTRY,
-            "email": user["email"], "login": state["login"], "sync": state["sync"],
+            "email": user["email"], "demo": demo.is_demo_email(user["email"]),
+            "login": state["login"], "sync": state["sync"],
             "stats": db.stats(user["id"])}
 
 
 @app.post("/api/lidl/start")
-def lidl_start(user: dict = Depends(current_user)):
+def lidl_start(user: dict = Depends(real_user)):
     """Prépare la connexion Lidl : l'extension ouvre l'URL et renvoie le code à /callback."""
     url, state = start_authorization(user["id"])
     state_of(user["id"])["login"] = {
@@ -201,7 +236,7 @@ def lidl_logout(user: dict = Depends(current_user)):
 
 
 @app.post("/api/sync")
-def sync(user: dict = Depends(current_user)):
+def sync(user: dict = Depends(real_user)):
     if not TokenStore(user["id"]).logged_in:
         raise HTTPException(401, "Connectez-vous d'abord à Lidl Plus.")
     state = state_of(user["id"])

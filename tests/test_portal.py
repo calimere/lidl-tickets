@@ -23,7 +23,7 @@ def test_routes_require_login(client):
 
 def test_register_login_logout(client):
     assert register(client).status_code == 200
-    assert client.get("/api/auth/me").json() == {"email": "a@example.com"}
+    assert client.get("/api/auth/me").json() == {"email": "a@example.com", "demo": False}
     cookie = client.cookies.get("session")
     client.post("/api/auth/logout")
     assert client.get("/api/auth/me").status_code == 401

@@ -91,6 +91,7 @@ class Throttle:
 
 
 login_throttle = Throttle()
+demo_throttle = Throttle(limit=10, window=3600)
 
 
 # --------------------------------------------------------------------------- comptes
@@ -114,6 +115,18 @@ def register(email: str, password: str, invite_code: str = "") -> int:
         return db.create_user(email, _hasher.hash(password))
     except sqlite3.IntegrityError:
         raise AccountError("Un compte existe déjà avec cet e-mail.", 409) from None
+
+
+def create_demo_user(throttle_key: str) -> int:
+    """Compte jetable rempli de tickets fictifs ; purgé après DEMO_TTL_HOURS."""
+    import demo   # import tardif : demo.py dépend de db
+    demo_throttle.check(throttle_key)
+    demo_throttle.fail(throttle_key)   # chaque création compte dans la limite
+    db.purge_demo_users(demo.DEMO_DOMAIN, config.DEMO_TTL_HOURS)
+    user_id = db.create_user(f"demo-{secrets.token_hex(6)}@{demo.DEMO_DOMAIN}",
+                             _hasher.hash(secrets.token_urlsafe(32)))
+    demo.populate(user_id)
+    return user_id
 
 
 def authenticate(email: str, password: str, throttle_key: str) -> int:

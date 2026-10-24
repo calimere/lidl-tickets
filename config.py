@@ -36,3 +36,10 @@ REGISTRATION_CODE = os.getenv("LIDL_REGISTRATION_CODE", "")
 # Cookie de session : mettre LIDL_COOKIE_SECURE=1 derrière HTTPS
 COOKIE_SECURE = os.getenv("LIDL_COOKIE_SECURE", "0") == "1"
 SESSION_DAYS = int(os.getenv("LIDL_SESSION_DAYS", "30"))
+
+# Page de confidentialité : éditeur du service et contact RGPD
+PUBLISHER = os.getenv("LIDL_PUBLISHER", "")        # ex. « Prénom Nom, EI – SIRET 123 456 789 00012 »
+CONTACT_EMAIL = os.getenv("LIDL_CONTACT_EMAIL", "")
+
+# Comptes de démonstration (données fictives) : supprimés après cette durée
+DEMO_TTL_HOURS = int(os.getenv("LIDL_DEMO_TTL_HOURS", "24"))

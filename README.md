@@ -33,7 +33,11 @@ Ouvrez http://127.0.0.1:3006 puis :
    « par référence » regroupe sur le code article, « par libellé » sur le nom
    (utile si Lidl a changé la référence d'un produit).
 
-Pour tester l'interface sans compte : `python manage.py demo` (données fictives).
+Sans compte Lidl : le bouton **« Essayer avec des données fictives »** de l'écran de
+connexion ouvre un compte jetable (≈190 tickets fictifs, supprimé après
+`LIDL_DEMO_TTL_HOURS` heures, création limitée à 10 par heure et par IP). Il ne peut pas
+relier Lidl Plus. En ligne de commande : `python manage.py demo EMAIL` remplit un compte
+existant de données fictives.
 
 ## Extension Chrome
 
@@ -83,6 +87,16 @@ python manage.py adopt moi@example.com    # tickets + data/token.json
   `LIDL_USE_SYSTEM_CA=1` (si un antivirus type Avast inspecte le HTTPS : erreur
   `unable to get local issuer certificate` lors de la connexion Lidl).
 
+## Données personnelles (RGPD)
+
+- Page publique `/confidentialite` (finalités, durées, droits, hébergement). Elle affiche
+  l'éditeur et le contact lus dans `LIDL_PUBLISHER` et `LIDL_CONTACT_EMAIL` : **à
+  renseigner avant d'ouvrir le service à d'autres personnes** (sinon « non renseigné »).
+- « Exporter mes données » (`GET /api/account/export`, JSON, sans secrets) et
+  « Supprimer mon compte » couvrent l'accès, la portabilité et l'effacement.
+- Ce texte est un modèle de bonne foi, pas un avis juridique : relisez-le pour votre
+  situation.
+
 ## Sécurité et confidentialité
 
 - L'outil ne voit jamais votre mot de passe : il récupère seulement le jeton
@@ -115,6 +129,7 @@ Les tickets bruts étant tous conservés, aucune donnée n'est perdue.
 | Fichier | Rôle |
 |---|---|
 | `app.py` | serveur FastAPI (API + IHM) |
+| `demo.py` | tickets fictifs du mode démo |
 | `accounts.py` | comptes du portail : mots de passe (argon2), sessions, chiffrement |
 | `auth.py` | demande PKCE/échange du code, gestion du jeton Lidl |
 | `extension/` | extension Chrome qui capte le code de connexion Lidl |

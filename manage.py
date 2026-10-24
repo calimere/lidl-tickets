@@ -87,36 +87,8 @@ def cmd_fixnames():
 
 
 def cmd_demo(email):
-    user_id = _user_id(email)
-    random.seed(1)
-    catalog = [("0012345", "Lait demi-écrémé 1L", 0.89, False),
-               ("0023456", "Beurre doux 250g", 1.79, False),
-               ("0034567", "Café moulu 250g", 2.49, False),
-               ("0045678", "Bananes", 1.69, True),
-               ("0056789", "Pâtes penne 500g", 0.75, False),
-               ("0067890", "Huile d'olive 1L", 5.49, False),
-               ("0078901", "Pain de mie", 1.15, False)]
-    day = datetime(2022, 1, 8)
-    n = 0
-    while day < datetime(2026, 10, 1):
-        years = (day - datetime(2022, 1, 1)).days / 365
-        lines = []
-        for code, name, base, weight in random.sample(catalog, k=random.randint(3, 6)):
-            price = round(base * (1 + 0.06 * years + random.uniform(-0.03, 0.03)), 2)
-            qty = round(random.uniform(0.6, 1.8), 3) if weight else random.randint(1, 3)
-            lines.append({"codeInput": code, "description": name,
-                          "currentUnitPrice": f"{price:.2f}".replace(".", ","),
-                          "quantity": str(qty).replace(".", ","), "isWeight": weight,
-                          "originalAmount": f"{price*qty:.2f}".replace(".", ","),
-                          "discounts": []})
-        total = sum(float(l["originalAmount"].replace(",", ".")) for l in lines)
-        tid = f"DEMO{n:05d}"
-        detail = {"id": tid, "date": day.isoformat(), "totalAmount": round(total, 2),
-                  "store": {"name": "Lidl Démo", "locality": "Marseille"}, "itemsLine": lines}
-        db.save_ticket(user_id, {"id": tid}, detail)
-        day += timedelta(days=random.randint(5, 12))
-        n += 1
-    print(f"{n} tickets fictifs créés.")
+    import demo
+    print(f"{demo.populate(_user_id(email))} tickets fictifs créés.")
 
 
 if __name__ == "__main__":

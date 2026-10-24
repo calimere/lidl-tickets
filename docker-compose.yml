@@ -14,6 +14,10 @@ services:
       LIDL_COOKIE_SECURE: ${LIDL_COOKIE_SECURE:-1}
       LIDL_COUNTRY: ${LIDL_COUNTRY:-FR}
       LIDL_LANGUAGE: ${LIDL_LANGUAGE:-fr}
+      LIDL_PUBLISHER: ${LIDL_PUBLISHER:-}
+      LIDL_CONTACT_EMAIL: ${LIDL_CONTACT_EMAIL:-}
+      LIDL_DEMO_TTL_HOURS: ${LIDL_DEMO_TTL_HOURS:-24}
+      LIDL_USE_SYSTEM_CA: ${LIDL_USE_SYSTEM_CA:-0}
     volumes:
       - lidl-data:/data
     # Visible uniquement depuis l'hôte : le reverse proxy fait l'HTTPS
