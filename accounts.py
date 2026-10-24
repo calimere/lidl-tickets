@@ -22,7 +22,10 @@ COOKIE_NAME = "session"
 MIN_PASSWORD_LEN = 10
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
-_hasher = PasswordHasher()
+# Paramètres argon2id « minimum OWASP » (19 Mio, 2 passes) : le défaut de la bibliothèque
+# (64 Mio par hachage) est trop gourmand pour un petit serveur partagé. Les empreintes
+# existantes restent valides (les paramètres sont inclus) et sont recalculées à la connexion.
+_hasher = PasswordHasher(memory_cost=19456, time_cost=2, parallelism=1)
 # Hash factice pour que la durée de réponse ne révèle pas si l'e-mail existe
 _DUMMY_HASH = _hasher.hash("dummy-password-for-timing")
 
